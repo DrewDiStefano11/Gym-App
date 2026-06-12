@@ -1,10 +1,12 @@
-const CACHE_NAME = "focus-lift-v7";
+const CACHE_NAME = "focus-lift-v8";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
   "./src/app.js",
+  "./src/fitcore-bootstrap.js",
   "./src/styles.css",
+  "./src/fitcore-overrides.css",
   "./assets/icon-192.svg",
   "./assets/icon-512.svg"
 ];
