@@ -11,11 +11,12 @@
     <link rel="icon" href="./assets/icon-192.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./assets/icon-192.svg" />
     <link rel="stylesheet" href="./src/styles.css?v=7" />
+    <link rel="stylesheet" href="./src/fitcore-overrides.css?v=8" />
     <title>Apex Signal</title>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="./src/app.js?v=7"></script>
+    <script type="module" src="./src/fitcore-bootstrap.js?v=8"></script>
     <script>
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.register("./sw.js?v=7").catch(() => {});
