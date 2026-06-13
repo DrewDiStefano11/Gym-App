@@ -64,13 +64,30 @@ const todayKey = () => new Date().toISOString().slice(0, 10);
 const seedState = {
   version: 7,
   schemaVersion: 7,
-  settings: { unit: "lb", theme: "purple-black", dataVersion: 7, suggestionSafety: "balanced", installPromptSeen: false, trackedLiftIds: ["bench-press", "squat", "overhead-tricep-extension"], notificationsEnabled: false, notificationPermission: "default", reminderTime: "18:00", accountLabel: "Personal", storageMode: "local" },
+  settings: {
+    unit: "lb",
+    theme: "purple-black",
+    dataVersion: 7,
+    suggestionSafety: "balanced",
+    installPromptSeen: false,
+    trackedLiftIds: ["bench-press", "squat", "overhead-tricep-extension"],
+    homeHiddenPrKeys: [],
+    homePinnedPrKeys: [],
+    homeHiddenGoalIds: [],
+    homePinnedGoalIds: [],
+    notificationsEnabled: false,
+    notificationPermission: "default",
+    reminderTime: "18:00",
+    accountLabel: "Personal",
+    storageMode: "local"
+  },
   activeMode: "training",
   onboardingComplete: false,
   dataSafety: { lastAutoBackupAt: null, lastSampleClearedAt: null, lastRestoreAt: null, backupCount: 0, backupError: "" },
   undoStack: [],
   pendingReview: null,
   importPreview: null,
+  pendingRecoveryEstimate: null,
   pendingMealEstimate: null,
   profile: {
     id: "profile-main",
@@ -152,6 +169,8 @@ let selectedExerciseId = "bench-press";
 let editingWorkoutId = "";
 let exerciseQuery = "";
 let newExerciseName = "";
+let activeSheet = "";
+let whoopUploadStatus = "";
 let restRemaining = 0;
 let restTimerId = null;
 let nowTick = Date.now();
@@ -186,12 +205,17 @@ function normalizeState(input = {}) {
   merged.schemaVersion = 7;
   merged.settings = { ...seedState.settings, ...(input.settings || {}), dataVersion: 7 };
   merged.settings.trackedLiftIds = Array.isArray(merged.settings.trackedLiftIds) && merged.settings.trackedLiftIds.length ? merged.settings.trackedLiftIds : seedState.settings.trackedLiftIds;
+  merged.settings.homeHiddenPrKeys = Array.isArray(merged.settings.homeHiddenPrKeys) ? merged.settings.homeHiddenPrKeys : [];
+  merged.settings.homePinnedPrKeys = Array.isArray(merged.settings.homePinnedPrKeys) ? merged.settings.homePinnedPrKeys : [];
+  merged.settings.homeHiddenGoalIds = Array.isArray(merged.settings.homeHiddenGoalIds) ? merged.settings.homeHiddenGoalIds : [];
+  merged.settings.homePinnedGoalIds = Array.isArray(merged.settings.homePinnedGoalIds) ? merged.settings.homePinnedGoalIds : [];
   merged.onboardingComplete = Boolean(input.onboardingComplete);
   merged.dataSafety = { ...seedState.dataSafety, ...(input.dataSafety || {}) };
   merged.activeMode = input.activeMode || seedState.activeMode;
   merged.undoStack = input.undoStack || [];
   merged.pendingReview = input.pendingReview || null;
   merged.importPreview = input.importPreview || null;
+  merged.pendingRecoveryEstimate = input.pendingRecoveryEstimate || null;
   merged.profile = { ...seedState.profile, ...(input.profile || {}), preferredTrainingDays: input.profile?.preferredTrainingDays?.length ? input.profile.preferredTrainingDays : seedState.profile.preferredTrainingDays, updatedAt: input.profile?.updatedAt || new Date().toISOString(), deletedAt: null };
   merged.weeklyPlan = { ...seedState.weeklyPlan, ...(input.weeklyPlan || {}), targetDays: input.weeklyPlan?.targetDays || input.profile?.trainingDaysPerWeek || 4, deletedAt: null };
   merged.weeklyPlan.plannedSessions = Array.isArray(input.weeklyPlan?.plannedSessions) ? input.weeklyPlan.plannedSessions.map(normalizePlannedSession) : [];
@@ -2897,9 +2921,10 @@ function homeScreen() {
   return `
     <section class="screen home-screen">
       <header class="home-hero">
-        <div><p class="eyebrow">${APP_NAME}</p><h1>${modeHeadline()}</h1><p class="muted">${modeSubhead()}</p></div>
+        <div><p class="eyebrow">${APP_NAME}</p><h1>${modeHeadline()}</h1>${modeSubhead() ? `<p class="muted">${modeSubhead()}</p>` : ""}</div>
       </header>
       ${modeDashboard()}
+      ${state.activeMode === "nutrition" ? "" : homeSheet()}
     </section>
   `;
 }
@@ -2915,10 +2940,10 @@ function modeHeadline() {
 
 function modeSubhead() {
   return {
-    training: `${state.profile.preferredSplit} - ${state.profile.trainingDaysPerWeek} days/week - full gym.`,
+    training: "",
     nutrition: `${latestBodyweight()} lb now - ${state.nutritionSettings.targetBodyweight || 165} lb target - ${state.nutritionSettings.goalRate} lb/week.`,
-    recovery: `${readinessScore()} readiness - sleep, HRV, soreness, and stress guide training.`,
-    progress: `${activeLiftGoals().length} active goals - strength, consistency, volume, PRs, and photos.`
+    recovery: "",
+    progress: ""
   }[state.activeMode] || state.profile.goal;
 }
 
@@ -2936,72 +2961,16 @@ function modeDashboard() {
 function trainingDashboard() {
   const stats = appStats();
   const recommendation = state.recommendations[0] || buildRecommendation();
-  const topGoal = activeLiftGoals()[0];
-  const lastWorkout = stats.workouts[0];
-
-  const heroTitle = state.activeWorkout ? "In Progress" : (readinessScore() < 55 ? "Recover first" : "Next Workout");
-  const heroSubtitle = state.activeWorkout
-    ? state.activeWorkout.exercises.map(ex => getExercise(ex.exerciseId).name).slice(0, 2).join(" + ")
-    : recommendation.exercises.map((item) => getExercise(item.exerciseId).name).slice(0, 2).join(" + ");
-
+  const homePrs = homePrItems(3);
+  const goalRows = homeGoalItems(2);
   return `
-    <header class="premium-hero">
-      <div class="premium-hero-main">
-        <div class="premium-hero-content">
-          <p class="eyebrow">${heroTitle}</p>
-          <h2>${heroSubtitle}</h2>
-          <span>${state.activeWorkout ? "Resuming your active session." : shortReason(recommendation.reasoning)}</span>
-        </div>
-        <div class="readiness-badge">
-          <strong>${readinessScore()}</strong>
-          <span>Ready</span>
-        </div>
-      </div>
-      <div class="premium-hero-actions">
-        <button class="primary" data-action="${state.activeWorkout ? "go-workout" : "start-recommendation"}" ${state.activeWorkout ? "" : `data-id="${recommendation.id}"`}>
-          ${state.activeWorkout ? "Resume" : "Start Workout"}
-        </button>
-        <button class="secondary" data-screen="templates">Templates</button>
-      </div>
-    </header>
-
-    <section class="premium-card">
-      <div class="section-heading">
-        <h2>Muscle Recovery</h2>
-        <button class="ghost" data-screen="progress">Details</button>
-      </div>
-      ${bodyHeatmap()}
-    </section>
-
-    <div class="premium-grid">
-      <div class="premium-card">
-        <div class="section-heading"><h2>Weekly Volume</h2></div>
-        ${bars(weeklyBuckets(4).map(w => ({ label: w.label, value: w.volume })), "Log sets to see volume.")}
-      </div>
-      <div class="premium-card">
-        <div class="section-heading"><h2>Recent PRs</h2></div>
-        ${stats.best.length ? stats.best.slice(0, 2).map(pr => `<div class="stat-badge">${getExercise(pr.exercise.id).name}</div>`).join("") : "No PRs yet."}
-      </div>
-    </div>
-
-    ${lastWorkout ? `
-      <section class="premium-card">
-        <div class="section-heading"><h2>Last Session</h2><small>${new Date(lastWorkout.finishedAt || lastWorkout.startedAt).toLocaleDateString()}</small></div>
-        <div class="leader-row">
-          <div>
-            <strong>${lastWorkout.exercises.map(ex => getExercise(ex.exerciseId).name).slice(0, 2).join(", ")}</strong>
-            <span>${completedSets(lastWorkout)} sets • ${workoutVolume(lastWorkout).toLocaleString()} lb</span>
-          </div>
-        </div>
-      </section>
-    ` : ""}
-
-    ${topGoal ? `
-      <section class="premium-card">
-        <div class="section-heading"><h2>Training Goal</h2></div>
-        ${goalRow(topGoal)}
-      </section>
-    ` : emptyStateCard("No active goal", "Set a target lift to focus your progression.", "Set Goal", "goals")}
+    <section class="today-card premium-today"><div><p class="eyebrow">Today</p><h2>${readinessScore() < 55 ? "Recover first" : "Train today"}</h2><span>${recommendation.exercises.map((item) => getExercise(item.exerciseId).name).slice(0, 2).join(" + ") || "Strength session"}</span></div><div class="today-score"><strong>${readinessScore()}</strong><small>${readinessState().label}</small></div><button class="primary" data-action="start-recommendation" data-id="${recommendation.id}">Start Workout</button></section>
+    <section class="quick-actions compact-actions"><button class="secondary" data-action="open-sheet" data-sheet="training-details">Details</button><button class="secondary" data-action="open-sheet" data-sheet="training-goals">Goals</button><button class="secondary" data-action="open-sheet" data-sheet="training-templates">Templates</button></section>
+    <section class="panel premium-panel"><div class="section-heading"><h2>Muscle Load</h2><strong class="confidence-pill">${completedWorkouts(7).length}/${state.profile.trainingDaysPerWeek} sessions</strong></div>${bodyHeatmap()}</section>
+    <section class="panel premium-panel chart-panel"><div class="section-heading"><h2>Weekly Volume</h2><strong class="confidence-pill">${weeklyVolume().toLocaleString()} lb</strong></div>${weeklyVolumeChart()}</section>
+    <section class="panel premium-panel"><div class="section-heading"><h2>Last Session</h2><button class="ghost" data-action="open-sheet" data-sheet="training-details">View</button></div>${lastSessionCard()}</section>
+    <section class="panel premium-panel"><div class="section-heading"><h2>Recent PRs</h2><button class="icon-ghost" aria-label="Manage PRs" data-action="open-sheet" data-sheet="training-prs">${iconSvg(navIcons.hub)}</button></div>${homePrs.length ? homePrs.map(homePrCard).join("") : emptyState("No PRs yet", "Completed sets will build your PR board.")}</section>
+    <section class="panel premium-panel"><div class="section-heading"><h2>Training Goals</h2><button class="icon-ghost" aria-label="Manage goals" data-action="open-sheet" data-sheet="training-goals">${iconSvg(navIcons.hub)}</button></div>${goalRows.length ? goalRows.map((goal) => goalRow(goal)).join("") : emptyState("No goals yet", "Add a lift target when you are ready.")}</section>
   `;
 }
 
@@ -3116,63 +3085,13 @@ function nutritionDashboard() {
 function recoveryDashboard() {
   const snapshot = latestReadinessSnapshot();
   const cardio = weeklyCardio();
-  const score = readinessScore();
-
-  const statusLabel = score >= 85 ? "Peak" : score >= 70 ? "Ready" : score >= 50 ? "Modify" : "Rest";
-  const statusText = {
-    "Peak": "Body is primed for a PR attempt.",
-    "Ready": "Recovery supports normal volume.",
-    "Modify": "Slight fatigue detected. Trim accessories.",
-    "Rest": "High fatigue. Consider a rest or active recovery day."
-  }[statusLabel];
-
-  const heroSubtitle = state.activeWorkout
-    ? "Workout in progress"
-    : statusText;
-
+  const stateInfo = readinessState();
   return `
-    <header class="premium-hero">
-      <div class="premium-hero-main">
-        <div class="premium-hero-content">
-          <p class="eyebrow">Readiness</p>
-          <h2>${score} / 100</h2>
-          <span>${heroSubtitle}</span>
-        </div>
-        <div class="readiness-badge">
-          <strong>${statusLabel}</strong>
-          <span>State</span>
-        </div>
-      </div>
-      <div class="premium-hero-actions">
-        <button class="primary" data-action="open-popup" data-popup="recovery-checkin">Check In</button>
-        <button class="secondary" data-screen="recovery-sleep">View Sleep</button>
-      </div>
-    </header>
-
-    <div class="premium-grid">
-      ${premiumStatCard("Sleep", snapshot?.sleepHours || "--", "h", snapshot?.sleepScore ? `${snapshot.sleepScore}% quality` : "")}
-      ${premiumStatCard("HRV", snapshot?.hrv || "--", "ms", "Recovery")}
-      ${premiumStatCard("RHR", snapshot?.restingHeartRate || "--", "bpm", "Load")}
-      ${premiumStatCard("Stress", latestRecovery()?.stress || "--", "/5", "Mental")}
-    </div>
-
-    <section class="premium-card">
-      <div class="section-heading"><h2>Steps Progress</h2><small>${snapshot?.steps?.toLocaleString() || 0} today</small></div>
-      <div class="metric i"><i style="width: ${macroPct(snapshot?.steps || 0, 10000)}%"></i></div>
-    </section>
-
-    <section class="premium-card">
-      <div class="section-heading"><h2>Muscle Soreness</h2><button class="ghost" data-screen="recovery-history">History</button></div>
-      ${latestRecovery() ? ringRow(latestRecovery().muscleSoreness || {}) : emptyState("No check-in", "Add a recovery log to see soreness.")}
-    </section>
-
-    <div class="insight-card">
-      <div class="icon-box">${iconSvg(navIcons.cardio)}</div>
-      <div>
-        <strong>Conditioning</strong>
-        <p>${cardio.minutes} min cardio this week. ${cardio.sessions} sessions total.</p>
-      </div>
-    </div>
+    <section class="today-card recovery-today premium-today"><div><p class="eyebrow">Readiness</p><h2>${stateInfo.label}</h2><span>${stateInfo.copy}</span></div><div class="today-score"><strong>${readinessScore()}</strong><small>score</small></div><button class="primary" data-action="open-sheet" data-sheet="recovery-checkin">Check In</button></section>
+    <section class="quick-actions compact-actions"><button class="secondary" data-action="open-sheet" data-sheet="whoop-upload">Upload Whoop</button><button class="secondary" data-action="open-sheet" data-sheet="recovery-trends">Trends</button><button class="secondary" data-action="open-sheet" data-sheet="recovery-cardio">Cardio</button></section>
+    <section class="visual-grid"><article class="metric"><span>${snapshot?.sleepHours || "--"}</span><small>Sleep hours</small></article><article class="metric"><span>${snapshot?.hrv || "--"}</span><small>HRV</small></article><article class="metric"><span>${snapshot?.restingHeartRate || "--"}</span><small>Resting HR</small></article><article class="metric"><span>${cardio.minutes}</span><small>Cardio min/week</small></article></section>
+    <section class="panel premium-panel chart-panel"><div class="section-heading"><h2>Sleep Trend</h2><strong class="confidence-pill">${sleepSummary().latest}</strong></div>${sleepGraph()}</section>
+    <section class="coach-note"><strong>${snapshot ? healthSourceSummary(snapshot) : "Manual recovery only"}</strong><span>${stateInfo.copy}</span></section>
   `;
 }
 
@@ -3180,73 +3099,14 @@ function progressDashboard() {
   const goals = activeLiftGoals().map(evaluatedGoal);
   const tracked = trackedLiftIds();
   const main = goals[0];
-  const lastPhoto = state.progressPhotos.filter(p => !p.deletedAt)[0];
-  const stats = appStats();
-
-  const heroTitle = main ? "Goal Progress" : "Progress Snapshot";
-  const heroSubtitle = main ? `${getExercise(main.exerciseId).name} to ${main.targetE1rm} lb` : "Track your gains.";
-  const prCount = stats.workouts.reduce((sum, w) => sum + w.exercises.reduce((exSum, item) => exSum + item.sets.filter(s => s.isPr).length, 0), 0);
-
+  const homePrs = homePrItems(3);
   return `
-    <header class="premium-hero">
-      <div class="premium-hero-main">
-        <div class="premium-hero-content">
-          <p class="eyebrow">${heroTitle}</p>
-          <h2>${heroSubtitle}</h2>
-          <span>${main ? `${daysUntil(main.targetDate)} days remaining to hit target.` : "Log workouts to build trends."}</span>
-        </div>
-        <div class="today-score">
-          <strong>${prCount}</strong>
-          <small>Total PRs</small>
-        </div>
-      </div>
-      <div class="premium-hero-actions">
-        <button class="primary" data-screen="progress-history">View Strength</button>
-        <button class="secondary" data-screen="progress-photos">Add Photo</button>
-      </div>
-    </header>
-
-    <div class="premium-grid">
-      <div class="premium-card">
-        <div class="section-heading"><h2>Strength</h2></div>
-        ${lineChart(e1rmTrend(selectedExerciseId, 7), "No history.", "lb")}
-      </div>
-      <div class="premium-card">
-        <div class="section-heading"><h2>Volume</h2></div>
-        ${bars(weeklyBuckets(4).map(w => ({ label: w.label, value: w.volume })), "No volume.")}
-      </div>
-    </div>
-
-    <section class="premium-card">
-      <div class="section-heading"><h2>Last Progress Photo</h2><button class="ghost" data-screen="progress-photos">Timeline</button></div>
-      ${lastPhoto ? `
-        <div class="premium-photo-preview" data-screen="progress-photos">
-          <img src="${lastPhoto.imageDataUrl}" alt="Latest progress">
-          <div class="premium-photo-overlay"><span>Tap to reveal</span></div>
-        </div>
-      ` : emptyState("No photos", "Add your first progress photo to see change.")}
-    </section>
-
-    <section class="premium-card">
-      <div class="section-heading"><h2>Top PRs</h2><button class="ghost" data-screen="progress-prs">Board</button></div>
-      ${stats.best.length ? stats.best.slice(0, 3).map(pr => `
-        <div class="leader-row">
-          <div>
-            <strong>${pr.exercise.name}</strong>
-            <span>${pr.set.weight} lb x ${pr.set.reps}</span>
-          </div>
-          <div class="stat-badge">${estimatedOneRepMax(pr.set)} e1RM</div>
-        </div>
-      `).join("") : emptyState("No PRs", "PRs will appear after workouts.")}
-    </section>
-
-    <div class="insight-card">
-      <div class="icon-box">${iconSvg(navIcons.goals)}</div>
-      <div>
-        <strong>Consistency</strong>
-        <p>${streakWeeks()} week streak. ${completedWorkouts(28).length} sessions in the last month.</p>
-      </div>
-    </div>
+    <section class="today-card progress-today premium-today"><div><p class="eyebrow">Top goal</p><h2>${main ? `${getExercise(main.exerciseId).name} ${main.targetE1rm}` : "Set a target"}</h2><span>${main ? `${main.currentE1rm} current` : "Add a lift goal to track the signal."}</span></div><div class="today-score"><strong>${main ? Math.round((main.currentE1rm / main.targetE1rm) * 100) : 0}%</strong><small>done</small></div><button class="primary" data-action="open-sheet" data-sheet="progress-goals">Goals</button></section>
+    <section class="quick-actions compact-actions"><button class="secondary" data-action="open-sheet" data-sheet="progress-strength">View Strength</button><button class="secondary" data-action="open-sheet" data-sheet="progress-photo">Add Photo</button><button class="secondary" data-action="open-sheet" data-sheet="progress-prs">PRs</button></section>
+    <section class="panel premium-panel chart-panel"><div class="section-heading"><h2>Volume Trend</h2><strong class="confidence-pill">Weekly</strong></div>${weeklyVolumeChart(8)}</section>
+    <section class="panel premium-panel chart-panel"><div class="section-heading"><h2>Strength Trend</h2><button class="ghost" data-action="open-sheet" data-sheet="progress-strength">Change</button></div>${strengthTrendPreview(selectedExerciseId)}</section>
+    <section class="panel premium-panel"><div class="section-heading"><h2>Goal Movement</h2><button class="icon-ghost" aria-label="Manage goals" data-action="open-sheet" data-sheet="progress-goals">${iconSvg(navIcons.hub)}</button></div>${goals.length ? homeGoalItems(3).map(goalRow).join("") : emptyState("No goals yet", "Add bench, bodyweight, or custom lift targets.")}</section>
+    <section class="panel premium-panel"><div class="section-heading"><h2>PRs</h2><button class="icon-ghost" aria-label="Manage PRs" data-action="open-sheet" data-sheet="progress-prs">${iconSvg(navIcons.hub)}</button></div>${homePrs.length ? homePrs.map(homePrCard).join("") : emptyState("No PRs yet", "Complete tracked lifts to build PR cards.")}</section>
   `;
 }
 
@@ -3254,6 +3114,272 @@ function shortReason(text) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   if (clean.length <= 82) return clean;
   return `${clean.slice(0, 79).trim()}...`;
+}
+
+function readinessState(score = readinessScore()) {
+  if (score >= 85) return { label: "Peak", copy: "High output is reasonable." };
+  if (score >= 70) return { label: "Ready", copy: "Normal training load fits today." };
+  if (score >= 55) return { label: "Modify", copy: "Reduce hard sets or load slightly." };
+  return { label: "Rest", copy: "Prioritize recovery before intensity." };
+}
+
+function homeSheet() {
+  if (!activeSheet) return "";
+  const sheets = {
+    "training-details": ["Training Details", `${lastSessionCard()}<div class="sheet-divider"></div>${consistencyVisual()}`],
+    "training-goals": ["Training Goals", homeGoalManager()],
+    "training-templates": ["Templates", activeTemplates().length ? activeTemplates().slice(0, 5).map((template) => `<button class="sheet-list-button" data-action="start-template" data-id="${template.id}"><strong>${escapeHtml(template.name)}</strong><span>${template.exercises.length} exercises</span></button>`).join("") : emptyState("No templates yet", "Create templates from the Add tab.")],
+    "training-prs": ["Homepage PRs", homePrManager()],
+    "recovery-checkin": ["Recovery Check-in", recoveryForm()],
+    "recovery-trends": ["Recovery Trends", `${sleepGraph()}${lineChart(healthTrend("hrv"), "Import HRV to see recovery trend.", "ms")}`],
+    "recovery-cardio": ["Cardio Support", cardioRows()],
+    "whoop-upload": ["Whoop Screenshot", whoopUploadSheet()],
+    "progress-strength": ["Strength Trend", progressStrengthSheet()],
+    "progress-photo": ["Add Photo", progressPhotoForm()],
+    "progress-prs": ["Homepage PRs", homePrManager()],
+    "progress-goals": ["Progress Goals", homeGoalManager()]
+  };
+  const [title, body] = sheets[activeSheet] || ["Details", ""];
+  return `
+    <section class="sheet-backdrop" data-action="close-sheet"></section>
+    <aside class="bottom-sheet" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+      <header><h2>${title}</h2><button class="ghost" data-action="close-sheet">Close</button></header>
+      <div class="sheet-content">${body}</div>
+    </aside>
+  `;
+}
+
+function prKey(item) {
+  return `${item.exercise.id}:${item.set.id || item.set.workoutId || item.set.workoutDate}`;
+}
+
+function homePrItems(limit = 3) {
+  const hidden = new Set(state.settings.homeHiddenPrKeys || []);
+  const pinned = new Set(state.settings.homePinnedPrKeys || []);
+  return recentPrs(12)
+    .filter((item) => !hidden.has(prKey(item)))
+    .sort((a, b) => Number(pinned.has(prKey(b))) - Number(pinned.has(prKey(a))) || new Date(b.set.workoutDate) - new Date(a.set.workoutDate))
+    .slice(0, limit);
+}
+
+function homePrCard(item) {
+  const key = prKey(item);
+  return `
+    <div class="pr-swipe-card" data-pr-key="${escapeAttr(key)}">
+      <div><strong>${item.exercise.name}</strong><span>${item.set.weight} lb x ${item.set.reps} - ${new Date(item.set.workoutDate).toLocaleDateString()}</span></div>
+      <b>${estimatedOneRepMax(item.set)} lb</b>
+      <button class="icon-ghost" aria-label="Hide PR" data-action="hide-home-pr" data-key="${escapeAttr(key)}">${iconSvg("M6 6l12 12M18 6L6 18")}</button>
+    </div>
+  `;
+}
+
+function homePrManager() {
+  const hidden = new Set(state.settings.homeHiddenPrKeys || []);
+  const pinned = new Set(state.settings.homePinnedPrKeys || []);
+  const rows = recentPrs(12).map((item) => {
+    const key = prKey(item);
+    return `<label class="toggle-line sheet-toggle"><input type="checkbox" data-action="toggle-home-pr" data-key="${escapeAttr(key)}" ${hidden.has(key) ? "" : "checked"}><span>${item.exercise.name}</span><b>${estimatedOneRepMax(item.set)} lb</b></label>`;
+  }).join("");
+  const pinnedRows = recentPrs(12).map((item) => {
+    const key = prKey(item);
+    return `<label class="toggle-line sheet-toggle"><input type="checkbox" data-action="pin-home-pr" data-key="${escapeAttr(key)}" ${pinned.has(key) ? "checked" : ""}><span>${item.exercise.name}</span><b>Pin</b></label>`;
+  }).join("");
+  return rows ? `${rows}<div class="sheet-divider"></div>${pinnedRows}` : emptyState("No PRs yet", "New PRs will appear automatically.");
+}
+
+function hideHomePr(key) {
+  if (!key) return;
+  state.settings.homeHiddenPrKeys = Array.from(new Set([...(state.settings.homeHiddenPrKeys || []), key]));
+  state.settings.homePinnedPrKeys = (state.settings.homePinnedPrKeys || []).filter((item) => item !== key);
+  saveState();
+  render();
+}
+
+function toggleHomePr(key, show) {
+  if (!key) return;
+  state.settings.homeHiddenPrKeys = show ? (state.settings.homeHiddenPrKeys || []).filter((item) => item !== key) : Array.from(new Set([...(state.settings.homeHiddenPrKeys || []), key]));
+  saveState();
+  render();
+}
+
+function pinHomePr(key, pinned) {
+  if (!key) return;
+  state.settings.homePinnedPrKeys = pinned ? Array.from(new Set([...(state.settings.homePinnedPrKeys || []), key])) : (state.settings.homePinnedPrKeys || []).filter((item) => item !== key);
+  if (pinned) state.settings.homeHiddenPrKeys = (state.settings.homeHiddenPrKeys || []).filter((item) => item !== key);
+  saveState();
+  render();
+}
+
+function homeGoalItems(limit = 3) {
+  const hidden = new Set(state.settings.homeHiddenGoalIds || []);
+  const pinned = new Set(state.settings.homePinnedGoalIds || []);
+  return activeLiftGoals()
+    .map(evaluatedGoal)
+    .filter((goal) => !hidden.has(goal.id))
+    .sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) || (a.targetDate || "").localeCompare(b.targetDate || ""))
+    .slice(0, limit);
+}
+
+function homeGoalManager() {
+  const hidden = new Set(state.settings.homeHiddenGoalIds || []);
+  const pinned = new Set(state.settings.homePinnedGoalIds || []);
+  const goals = activeLiftGoals().map(evaluatedGoal);
+  if (!goals.length) return emptyState("No goals yet", "Add goals from the Goals tab.");
+  return goals.map((goal) => `
+    <div class="sheet-goal-row">
+      <label class="toggle-line sheet-toggle"><input type="checkbox" data-action="toggle-home-goal" data-id="${goal.id}" ${hidden.has(goal.id) ? "" : "checked"}><span>${getExercise(goal.exerciseId).name}</span><b>${goal.targetE1rm}</b></label>
+      <label class="toggle-line sheet-toggle compact-pin"><input type="checkbox" data-action="pin-home-goal" data-id="${goal.id}" ${pinned.has(goal.id) ? "checked" : ""}><span>Pin</span></label>
+    </div>
+  `).join("");
+}
+
+function toggleHomeGoal(id, show) {
+  if (!id) return;
+  state.settings.homeHiddenGoalIds = show ? (state.settings.homeHiddenGoalIds || []).filter((item) => item !== id) : Array.from(new Set([...(state.settings.homeHiddenGoalIds || []), id]));
+  saveState();
+  render();
+}
+
+function pinHomeGoal(id, pinned) {
+  if (!id) return;
+  state.settings.homePinnedGoalIds = pinned ? Array.from(new Set([...(state.settings.homePinnedGoalIds || []), id])) : (state.settings.homePinnedGoalIds || []).filter((item) => item !== id);
+  if (pinned) state.settings.homeHiddenGoalIds = (state.settings.homeHiddenGoalIds || []).filter((item) => item !== id);
+  saveState();
+  render();
+}
+
+function weeklyVolumeChart(count = 6) {
+  const weeks = weeklyBuckets(count);
+  const values = weeks.map((week) => ({ label: week.label, value: week.volume, meta: `${week.workouts} sessions` }));
+  return premiumBars(values, "Weekly volume appears after workouts.", "lb");
+}
+
+function premiumBars(items, emptyText, unit = "") {
+  if (!items.some((item) => Number(item.value) > 0)) return emptyState("No chart yet", emptyText);
+  const max = Math.max(...items.map((item) => Number(item.value || 0)), 1);
+  return `<div class="premium-bars">${items.map((item) => {
+    const pct = Math.max(12, (Number(item.value || 0) / max) * 100);
+    return `<div class="premium-bar"><span>${item.value ? Number(item.value).toLocaleString() : ""}</span><i style="height:${pct}%"></i><small>${item.label}</small>${item.meta ? `<em>${item.meta}</em>` : ""}</div>`;
+  }).join("")}</div><div class="chart-meta"><span>${items[0].value.toLocaleString()}${unit ? ` ${unit}` : ""}</span><strong>${items.at(-1).value.toLocaleString()}${unit ? ` ${unit}` : ""}</strong></div>`;
+}
+
+function lastSessionCard() {
+  const session = completedWorkouts(3650)[0];
+  if (!session) return emptyState("No session yet", "Start a workout to build recaps.");
+  const sets = completedSets(session);
+  const volume = workoutVolume(session);
+  const exercises = session.exercises.length;
+  const duration = session.finishedAt ? Math.max(1, Math.round((new Date(session.finishedAt) - new Date(session.startedAt)) / 60000)) : null;
+  const top = session.exercises.flatMap((item) => item.sets.filter((set) => set.completed).map((set) => ({ set, exercise: getExercise(item.exerciseId) }))).sort((a, b) => estimatedOneRepMax(b.set) - estimatedOneRepMax(a.set))[0];
+  return `
+    <div class="recap-card">
+      <div><strong>${new Date(session.finishedAt || session.startedAt).toLocaleDateString()}</strong><span>${session.exercises.map((item) => getExercise(item.exerciseId).name).slice(0, 3).join(", ")}</span></div>
+      <div class="score-grid compact-score"><article class="metric"><span>${exercises}</span><small>Exercises</small></article><article class="metric"><span>${sets}</span><small>Sets</small></article><article class="metric"><span>${volume.toLocaleString()}</span><small>Volume</small></article><article class="metric"><span>${duration || "--"}</span><small>Minutes</small></article></div>
+      ${top ? `<p class="recap-top">Top set: ${top.exercise.name} ${top.set.weight} x ${top.set.reps}</p>` : ""}
+    </div>
+  `;
+}
+
+function sleepSummary() {
+  const points = healthTrend("sleepHours", 14);
+  const latest = points.at(-1)?.value ? `${points.at(-1).value}h` : "--";
+  const average = points.length ? (points.reduce((sum, point) => sum + Number(point.value || 0), 0) / points.length).toFixed(1) : "--";
+  return { latest, average };
+}
+
+function sleepGraph() {
+  const points = healthTrend("sleepHours", 14);
+  const summary = sleepSummary();
+  return `
+    <div class="sleep-graph">
+      ${premiumBars(points.map((point) => ({ ...point, meta: "" })), "Import sleep or save check-ins to see trends.", "hr")}
+      <div class="sleep-summary"><span>Latest <b>${summary.latest}</b></span><span>Avg <b>${summary.average}h</b></span><span>Target <b>7.5h</b></span></div>
+    </div>
+  `;
+}
+
+function strengthTrendPreview(exerciseId = selectedExerciseId) {
+  const points = e1rmTrend(exerciseId, 10);
+  const volume = volumeTrend(exerciseId, 8);
+  if (points.length < 2) return emptyState("Not enough data", "Log this exercise across multiple sessions to see progression.");
+  const delta = points.at(-1).value - points[0].value;
+  return `<div class="strength-trend-card"><div class="section-heading inline-heading"><span>${getExercise(exerciseId).name}</span><strong class="${delta >= 0 ? "good-text" : "danger-text"}">${delta >= 0 ? "+" : ""}${delta} lb</strong></div>${lineChart(points, "Log this lift to see strength trend.")}${premiumBars(volume.map((point) => ({ ...point, meta: "" })), "Volume appears after sessions.", "lb")}</div>`;
+}
+
+function progressStrengthSheet() {
+  return `${trackedLiftSelector()}<div class="sheet-divider"></div>${strengthTrendPreview(selectedExerciseId)}<div class="sheet-divider"></div><div class="section-heading inline-heading"><span>History</span></div>${exerciseHistoryRows(selectedExerciseId)}`;
+}
+
+function whoopUploadSheet() {
+  const estimate = state.pendingRecoveryEstimate;
+  const form = estimate ? recoveryEstimateForm(estimate) : "";
+  return `
+    <label class="photo-drop">Upload screenshot/photo<input data-input="whoop-photo" type="file" accept="image/*" /></label>
+    ${whoopUploadStatus ? `<p class="privacy-note">${escapeHtml(whoopUploadStatus)}</p>` : ""}
+    ${form}
+  `;
+}
+
+function recoveryEstimateForm(estimate) {
+  const metrics = estimate.metrics || {};
+  return `
+    <form data-form="recovery-estimate" class="form-stack compact-form">
+      <div class="form-grid">
+        <label>Date<input name="date" type="date" value="${escapeAttr(estimate.date || todayKey())}"></label>
+        <label>Sleep hours<input name="sleepHours" inputmode="decimal" value="${escapeAttr(metrics.sleepHours ?? "")}"></label>
+        <label>Sleep score<input name="sleepScore" inputmode="numeric" value="${escapeAttr(metrics.sleepScore ?? "")}"></label>
+        <label>HRV<input name="hrv" inputmode="numeric" value="${escapeAttr(metrics.hrv ?? "")}"></label>
+        <label>Resting HR<input name="restingHeartRate" inputmode="numeric" value="${escapeAttr(metrics.restingHeartRate ?? "")}"></label>
+        <label>Recovery score<input name="recoveryScore" inputmode="numeric" value="${escapeAttr(metrics.recoveryScore ?? "")}"></label>
+        <label>Strain<input name="strain" inputmode="decimal" value="${escapeAttr(metrics.strain ?? "")}"></label>
+      </div>
+      <p class="privacy-note">${escapeHtml(estimate.notes || "Review values before saving.")}</p>
+      <div class="backup-actions"><button class="secondary" type="button" data-action="cancel-recovery-estimate">Cancel</button><button class="primary" type="submit">Confirm Save</button></div>
+    </form>
+  `;
+}
+
+async function estimateRecoveryFromPhoto(file) {
+  if (!file) return;
+  whoopUploadStatus = "Reading screenshot...";
+  render();
+  try {
+    const imageDataUrl = await imageFileToDataUrl(file, 1200);
+    const response = await fetch("/api/recovery/whoop-screenshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageDataUrl })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Screenshot extraction failed.");
+    state.pendingRecoveryEstimate = { date: todayKey(), metrics: payload.metrics || {}, notes: payload.notes || "Review extracted values before saving.", createdAt: new Date().toISOString() };
+    whoopUploadStatus = "Review and confirm before saving.";
+  } catch (error) {
+    whoopUploadStatus = error.message || "Could not read that image.";
+  }
+  saveState();
+  render();
+}
+
+function saveRecoveryEstimateFromForm(form) {
+  const date = form.date.value || todayKey();
+  const source = ensureHealthSource("whoop_screenshot", "Screenshot/photo import");
+  const fields = [
+    ["sleepHours", form.sleepHours.value, "hr"],
+    ["sleepScore", form.sleepScore.value, "%"],
+    ["hrv", form.hrv.value, "ms"],
+    ["restingHeartRate", form.restingHeartRate.value, "bpm"],
+    ["readinessScore", form.recoveryScore.value, "%"],
+    ["strain", form.strain.value, "score"]
+  ];
+  pushUndo("Saved Whoop screenshot data");
+  fields.forEach(([type, value, unit]) => addHealthMetric(source.id, date, type, value, unit, "whoop_screenshot"));
+  state.readinessSnapshots = [buildReadinessSnapshot(date), ...state.readinessSnapshots.filter((item) => item.date !== date)];
+  state.pendingRecoveryEstimate = null;
+  whoopUploadStatus = "";
+  activeSheet = "";
+  createAutoBackup("Saved Whoop screenshot data");
+  render();
 }
 
 function onboardingScreen() {
@@ -3830,7 +3956,7 @@ function workoutScreen() {
       ` : `
         <div class="active-completed-summary">
           ${completedExerciseSummary(item)}
-          ${firstIncomplete ? "" : "<p class='privacy-note' style='text-align:center;'>All exercises complete!</p>"}
+          ${firstIncomplete ? "" : "<p class='privacy-note' style='text-align:center;'>All exercises complete.</p>"}
         </div>
       `}
 
@@ -3845,7 +3971,7 @@ function workoutScreen() {
         <div class="exercise-reorder-list">
           ${workout.exercises.map((ex, idx) => `
             <div class="reorder-item ${idx === currentIndex ? "active" : ""}" draggable="true" data-index="${idx}">
-              <div class="reorder-handle">⋮⋮</div>
+              <div class="reorder-handle">::</div>
               <button class="reorder-name" data-action="select-workout-exercise" data-id="${ex.exerciseId}">${idx + 1}. ${getExercise(ex.exerciseId).name}</button>
               <button class="danger-icon small" data-action="remove-exercise" data-item="${idx}">${iconSvg(navIcons.trash)}</button>
             </div>
@@ -3870,7 +3996,7 @@ function workoutScreen() {
         <section class="panel completed-panel">
           <div class="section-heading"><h2>Completed</h2></div>
           <div class="completed-list">
-            ${completed.filter(ex => ex.exerciseId !== item.exerciseId).map(completedExerciseSummary).join("")}
+            ${completed.filter((ex) => ex.exerciseId !== item.exerciseId).map(completedExerciseSummary).join("")}
           </div>
         </section>
       ` : ""}
@@ -3887,15 +4013,15 @@ function completedExerciseSummary(item) {
   const doneSets = item.sets.filter((set) => set.completed);
   const volume = doneSets.reduce((total, set) => total + (Number(set.weight) || 0) * (Number(set.reps) || 0), 0);
   const totalReps = doneSets.reduce((total, set) => total + (Number(set.reps) || 0), 0);
-  const best = doneSets.reduce((b, set) => !b || (Number(set.weight) > Number(b.weight) || (Number(set.weight) === Number(b.weight) && Number(set.reps) > Number(b.reps))) ? set : b, null);
+  const best = doneSets.reduce((currentBest, set) => !currentBest || (Number(set.weight) > Number(currentBest.weight) || (Number(set.weight) === Number(currentBest.weight) && Number(set.reps) > Number(currentBest.reps))) ? set : currentBest, null);
 
   return `
     <article class="completed-summary-card" data-action="select-workout-exercise" data-id="${item.exerciseId}">
       <div class="summary-main">
         <strong>${exercise.name}</strong>
-        <span>${doneSets.length} sets • ${totalReps} reps • ${volume.toLocaleString()} lb</span>
+        <span>${doneSets.length} sets - ${totalReps} reps - ${volume.toLocaleString()} lb</span>
       </div>
-      ${best ? `<div class="summary-best">Best: ${best.weight} × ${best.reps}</div>` : ""}
+      ${best ? `<div class="summary-best">Best: ${best.weight} x ${best.reps}</div>` : ""}
     </article>
   `;
 }
@@ -4070,7 +4196,7 @@ function setRow(itemIndex, setIndex, set) {
   const item = state.activeWorkout.exercises[itemIndex];
   const history = exerciseHistory(item.exerciseId);
   const prevSet = history[setIndex] || history[0];
-  const prevPerf = prevSet ? `${prevSet.weight} × ${prevSet.reps}` : "";
+  const prevPerf = prevSet ? `${prevSet.weight} x ${prevSet.reps}` : "";
 
   const typeOptions = [
     ["Standard", ""],
@@ -4081,7 +4207,6 @@ function setRow(itemIndex, setIndex, set) {
     ["Unilateral", "isUnilateral"],
     ["Tempo", "isControlledTempo"]
   ];
-
   const currentType = typeOptions.find(([label, flag]) => flag && set[flag])?.[0] || "Standard";
 
   return `
@@ -4224,39 +4349,80 @@ function consistencyVisual() {
 }
 
 function bodyHeatmap() {
-  const values = muscleSets(7);
-  const max = Math.max(...Object.values(values), 1);
-  const op = (muscle) => 0.16 + Math.min(1, (values[muscle] || 0) / max) * 0.84;
-  const label = (muscle) => `${muscle}: ${values[muscle] || 0} sets`;
+  const values = muscleWorkload();
+  const max = Math.max(...Object.values(values).map((item) => item.score), 1);
+  const tone = (muscle) => Math.min(1, (values[muscle]?.score || 0) / max);
+  const op = (muscle) => 0.18 + tone(muscle) * 0.82;
+  const label = (muscle) => `${muscle}: ${values[muscle]?.sets || 0} sets, ${Math.round(values[muscle]?.score || 0)} load`;
+  const chips = Object.entries(values).sort((a, b) => b[1].score - a[1].score).slice(0, 4);
   return `
     <div class="body-heatmap">
-      <svg viewBox="0 0 220 190" role="img" aria-label="Weekly front and back muscle heatmap">
+      <svg viewBox="0 0 220 210" role="img" aria-label="Weekly front and back muscle workload map">
         <text x="54" y="14">Front</text><text x="154" y="14">Back</text>
         <g class="body-side front">
           <circle cx="58" cy="31" r="12"></circle>
-          <path d="M42 48 Q58 38 74 48 L68 91 Q58 99 48 91 Z" style="opacity:${op("Chest")}"><title>${label("Chest")}</title></path>
-          <path d="M31 52 Q39 48 43 55 L37 94 Q29 95 26 88 Z" style="opacity:${op("Shoulders")}"><title>${label("Shoulders")}</title></path>
-          <path d="M73 55 Q78 48 86 52 L91 88 Q88 95 80 94 Z" style="opacity:${op("Shoulders")}"><title>${label("Shoulders")}</title></path>
-          <path d="M39 94 Q49 101 57 98 L54 165 Q42 169 35 157 Z" style="opacity:${op("Quads")}"><title>${label("Quads")}</title></path>
-          <path d="M61 98 Q70 101 78 94 L82 157 Q75 169 64 165 Z" style="opacity:${op("Quads")}"><title>${label("Quads")}</title></path>
-          <path d="M48 92 Q58 99 68 92 L70 113 Q58 120 46 113 Z" style="opacity:${op("Core")}"><title>${label("Core")}</title></path>
-          <path d="M28 89 Q34 94 38 94 L35 132 Q28 132 24 124 Z" style="opacity:${op("Biceps")}"><title>${label("Biceps")}</title></path>
-          <path d="M80 94 Q86 94 91 89 L95 124 Q91 132 84 132 Z" style="opacity:${op("Biceps")}"><title>${label("Biceps")}</title></path>
+          <path class="load load-${loadBand(tone("Chest"))}" d="M42 48 Q58 38 74 48 L68 91 Q58 99 48 91 Z" style="opacity:${op("Chest")}"><title>${label("Chest")}</title></path>
+          <path class="load load-${loadBand(tone("Shoulders"))}" d="M31 52 Q39 48 43 55 L37 94 Q29 95 26 88 Z" style="opacity:${op("Shoulders")}"><title>${label("Shoulders")}</title></path>
+          <path class="load load-${loadBand(tone("Shoulders"))}" d="M73 55 Q78 48 86 52 L91 88 Q88 95 80 94 Z" style="opacity:${op("Shoulders")}"><title>${label("Shoulders")}</title></path>
+          <path class="load load-${loadBand(tone("Quads"))}" d="M39 94 Q49 101 57 98 L54 165 Q42 169 35 157 Z" style="opacity:${op("Quads")}"><title>${label("Quads")}</title></path>
+          <path class="load load-${loadBand(tone("Quads"))}" d="M61 98 Q70 101 78 94 L82 157 Q75 169 64 165 Z" style="opacity:${op("Quads")}"><title>${label("Quads")}</title></path>
+          <path class="load load-${loadBand(tone("Core"))}" d="M48 92 Q58 99 68 92 L70 113 Q58 120 46 113 Z" style="opacity:${op("Core")}"><title>${label("Core")}</title></path>
+          <path class="load load-${loadBand(tone("Biceps"))}" d="M28 89 Q34 94 38 94 L35 132 Q28 132 24 124 Z" style="opacity:${op("Biceps")}"><title>${label("Biceps")}</title></path>
+          <path class="load load-${loadBand(tone("Biceps"))}" d="M80 94 Q86 94 91 89 L95 124 Q91 132 84 132 Z" style="opacity:${op("Biceps")}"><title>${label("Biceps")}</title></path>
         </g>
         <g class="body-side back">
           <circle cx="160" cy="31" r="12"></circle>
-          <path d="M142 49 Q160 39 178 49 L174 91 Q160 101 146 91 Z" style="opacity:${op("Back")}"><title>${label("Back")}</title></path>
-          <path d="M146 55 Q160 66 174 55 L171 94 Q160 102 149 94 Z" style="opacity:${op("Lats")}"><title>${label("Lats")}</title></path>
-          <path d="M132 52 Q140 48 144 55 L139 94 Q131 95 128 88 Z" style="opacity:${op("Triceps")}"><title>${label("Triceps")}</title></path>
-          <path d="M177 55 Q182 48 190 52 L193 88 Q190 95 182 94 Z" style="opacity:${op("Triceps")}"><title>${label("Triceps")}</title></path>
-          <path d="M149 91 Q160 99 171 91 L172 116 Q160 124 148 116 Z" style="opacity:${op("Glutes")}"><title>${label("Glutes")}</title></path>
-          <path d="M141 116 Q151 123 159 119 L155 166 Q144 169 137 158 Z" style="opacity:${op("Hamstrings")}"><title>${label("Hamstrings")}</title></path>
-          <path d="M163 119 Q172 123 180 116 L184 158 Q177 169 166 166 Z" style="opacity:${op("Hamstrings")}"><title>${label("Hamstrings")}</title></path>
+          <path class="load load-${loadBand(tone("Back"))}" d="M142 49 Q160 39 178 49 L174 91 Q160 101 146 91 Z" style="opacity:${op("Back")}"><title>${label("Back")}</title></path>
+          <path class="load load-${loadBand(tone("Lats"))}" d="M146 55 Q160 66 174 55 L171 94 Q160 102 149 94 Z" style="opacity:${op("Lats")}"><title>${label("Lats")}</title></path>
+          <path class="load load-${loadBand(tone("Triceps"))}" d="M132 52 Q140 48 144 55 L139 94 Q131 95 128 88 Z" style="opacity:${op("Triceps")}"><title>${label("Triceps")}</title></path>
+          <path class="load load-${loadBand(tone("Triceps"))}" d="M177 55 Q182 48 190 52 L193 88 Q190 95 182 94 Z" style="opacity:${op("Triceps")}"><title>${label("Triceps")}</title></path>
+          <path class="load load-${loadBand(tone("Glutes"))}" d="M149 91 Q160 99 171 91 L172 116 Q160 124 148 116 Z" style="opacity:${op("Glutes")}"><title>${label("Glutes")}</title></path>
+          <path class="load load-${loadBand(tone("Hamstrings"))}" d="M141 116 Q151 123 159 119 L155 166 Q144 169 137 158 Z" style="opacity:${op("Hamstrings")}"><title>${label("Hamstrings")}</title></path>
+          <path class="load load-${loadBand(tone("Hamstrings"))}" d="M163 119 Q172 123 180 116 L184 158 Q177 169 166 166 Z" style="opacity:${op("Hamstrings")}"><title>${label("Hamstrings")}</title></path>
         </g>
       </svg>
-      <div class="heatmap-legend"><span>Low</span><i></i><strong>High weekly set load</strong></div>
+      <div class="load-chip-row">${chips.length ? chips.map(([muscle, item]) => `<span>${muscle}<b>${Math.round(item.score)}</b></span>`).join("") : `<span>Log workouts<b>0</b></span>`}</div>
+      <div class="heatmap-legend"><span>Low</span><i></i><strong>High workload</strong></div>
     </div>
   `;
+}
+
+function loadBand(value) {
+  if (value >= 0.78) return "high";
+  if (value >= 0.48) return "medium";
+  return "low";
+}
+
+function muscleWorkload() {
+  const recent = {};
+  const baseline = {};
+  const readinessPenalty = readinessScore() < 55 ? 1.22 : readinessScore() < 70 ? 1.1 : 1;
+  const add = (bucket, workout, ageWeight = 1) => {
+    workout.exercises.forEach((item) => {
+      const exercise = getExercise(item.exerciseId);
+      const completed = item.sets.filter((set) => set.completed && !set.deletedAt);
+      const setVolume = completed.reduce((sum, set) => sum + (Number(set.weight) || 0) * (Number(set.reps) || 0), 0);
+      const load = completed.length * 12 + setVolume / 120;
+      [...exercise.primaryMuscles, ...(exercise.secondaryMuscles || [])].forEach((muscle, index) => {
+        const multiplier = index < exercise.primaryMuscles.length ? 1 : 0.45;
+        bucket[muscle] = bucket[muscle] || { score: 0, sets: 0, sessions: new Set() };
+        bucket[muscle].score += load * multiplier * ageWeight;
+        bucket[muscle].sets += completed.length * multiplier;
+        bucket[muscle].sessions.add(workout.id);
+      });
+    });
+  };
+  completedWorkouts(7).forEach((workout) => add(recent, workout, 1));
+  completedWorkouts(42).forEach((workout) => add(baseline, workout, 1 / 6));
+  muscleGroups.forEach((muscle) => {
+    const current = recent[muscle] || { score: 0, sets: 0, sessions: new Set() };
+    const base = baseline[muscle]?.score || 1;
+    const frequency = current.sessions?.size || 0;
+    const baselineRatio = Math.min(1.5, current.score / Math.max(1, base));
+    current.score = current.score * (1 + baselineRatio * 0.18 + frequency * 0.06) * readinessPenalty;
+    recent[muscle] = current;
+  });
+  return recent;
 }
 
 function ringRow(values) {
@@ -4696,6 +4862,14 @@ function bindEvents(root) {
       if (action === "remove-template-exercise") removeTemplateExercise(button.dataset.id, Number(button.dataset.index));
       if (action === "delete-template") deleteTemplate(button.dataset.id);
       if (action === "delete-progress-photo") deleteProgressPhoto(button.dataset.id);
+      if (action === "open-sheet") { activeSheet = button.dataset.sheet || ""; render(); }
+      if (action === "close-sheet") { activeSheet = ""; render(); }
+      if (action === "hide-home-pr") hideHomePr(button.dataset.key);
+      if (action === "toggle-home-pr") toggleHomePr(button.dataset.key, button.checked);
+      if (action === "pin-home-pr") pinHomePr(button.dataset.key, button.checked);
+      if (action === "toggle-home-goal") toggleHomeGoal(button.dataset.id, button.checked);
+      if (action === "pin-home-goal") pinHomeGoal(button.dataset.id, button.checked);
+      if (action === "cancel-recovery-estimate") { state.pendingRecoveryEstimate = null; whoopUploadStatus = ""; saveState(); render(); }
       if (action === "export-json") exportJson();
       if (action === "export-structured-json") exportStructuredJson();
       if (action === "export-photo-backup") exportPhotoBackup();
@@ -4715,7 +4889,7 @@ function bindEvents(root) {
       if (action === "complete-onboarding") completeOnboarding();
       if (action === "skip-onboarding") completeOnboarding(false);
       if (action === "set-ai-context") { aiContextMode = button.dataset.mode || "quick"; render(); }
-      if (action === "set-mode") { state.activeMode = button.dataset.mode || "training"; screen = "home"; activePopup = null; saveState(); render(); }
+      if (action === "set-mode") { state.activeMode = button.dataset.mode || "training"; screen = "home"; activeSheet = ""; activePopup = null; saveState(); render(); }
       if (action === "open-popup") { activePopup = button.dataset.popup; render(); }
       if (action === "close-popup") { activePopup = null; render(); }
       if (action === "send-ai-chat") sendAiChat();
@@ -4735,8 +4909,8 @@ function bindEvents(root) {
       const setIndex = Number(select.dataset.set);
       const flag = select.value;
       const set = state.activeWorkout.exercises[itemIndex].sets[setIndex];
-      ["isWarmup", "isDropSet", "isPartial", "toFailure", "isUnilateral", "isControlledTempo"].forEach((f) => {
-        set[f] = f === flag;
+      ["isWarmup", "isDropSet", "isPartial", "toFailure", "isUnilateral", "isControlledTempo"].forEach((item) => {
+        set[item] = item === flag;
       });
       saveState();
       render();
@@ -4752,61 +4926,48 @@ function bindEvents(root) {
       item.classList.add("dragging");
     };
 
-    const handleDragOver = (e, target) => {
+    const handleDragOver = (event, target) => {
       if (target && target !== draggedItem) {
         const rect = target.getBoundingClientRect();
         const midpoint = rect.top + rect.height / 2;
-        const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-        if (clientY < midpoint) {
-          target.before(draggedItem);
-        } else {
-          target.after(draggedItem);
-        }
+        const clientY = event.clientY || event.touches?.[0]?.clientY;
+        if (clientY < midpoint) target.before(draggedItem);
+        else target.after(draggedItem);
       }
     };
 
     const handleDragEnd = () => {
       if (!draggedItem) return;
       draggedItem.classList.remove("dragging");
-      const newOrder = Array.from(reorderList.querySelectorAll(".reorder-item")).map((el) => Number(el.dataset.index));
+      const newOrder = Array.from(reorderList.querySelectorAll(".reorder-item")).map((item) => Number(item.dataset.index));
       const exercises = state.activeWorkout.exercises;
-      const reordered = newOrder.map((idx) => exercises[idx]);
-      state.activeWorkout.exercises = reordered;
+      state.activeWorkout.exercises = newOrder.map((index) => exercises[index]);
       draggedItem = null;
       saveState();
       render();
     };
 
     reorderList.querySelectorAll(".reorder-item").forEach((item) => {
-      item.addEventListener("dragstart", (e) => {
-        e.dataTransfer.effectAllowed = "move";
+      item.addEventListener("dragstart", (event) => {
+        event.dataTransfer.effectAllowed = "move";
         handleDragStart(item);
       });
-
-      item.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        handleDragOver(e, e.target.closest(".reorder-item"));
+      item.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        handleDragOver(event, event.target.closest(".reorder-item"));
       });
-
       item.addEventListener("dragend", handleDragEnd);
-
-      // Touch support
-      item.addEventListener("touchstart", (e) => {
-        if (e.target.closest(".reorder-handle")) {
-          handleDragStart(item);
-        }
+      item.addEventListener("touchstart", (event) => {
+        if (event.target.closest(".reorder-handle")) handleDragStart(item);
       }, { passive: true });
-
-      item.addEventListener("touchmove", (e) => {
-        if (draggedItem) {
-          e.preventDefault();
-          const touch = e.touches[0];
-          const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest(".reorder-item");
-          handleDragOver(e, target);
-        }
+      item.addEventListener("touchmove", (event) => {
+        if (!draggedItem) return;
+        event.preventDefault();
+        const touch = event.touches[0];
+        const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest(".reorder-item");
+        handleDragOver(event, target);
       }, { passive: false });
-
       item.addEventListener("touchend", handleDragEnd);
     });
   }
@@ -4856,6 +5017,12 @@ function bindEvents(root) {
     if (file && form) saveProgressPhoto(file, form);
   });
 
+  const whoopPhoto = root.querySelector("[data-input='whoop-photo']");
+  if (whoopPhoto) whoopPhoto.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    if (file) estimateRecoveryFromPhoto(file);
+  });
+
   const importInput = root.querySelector("[data-input='import-backup']");
   if (importInput) importInput.addEventListener("change", (event) => {
     const file = event.target.files?.[0];
@@ -4878,6 +5045,12 @@ function bindEvents(root) {
   if (recovery) recovery.addEventListener("submit", (event) => {
     event.preventDefault();
     saveRecoveryFromForm(recovery);
+  });
+
+  const recoveryEstimate = root.querySelector("[data-form='recovery-estimate']");
+  if (recoveryEstimate) recoveryEstimate.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveRecoveryEstimateFromForm(recoveryEstimate);
   });
 
   const profile = root.querySelector("[data-form='profile']");
@@ -4920,6 +5093,21 @@ function bindEvents(root) {
     template.addEventListener("submit", (event) => {
       event.preventDefault();
       saveTemplateFromForm(template);
+    });
+  });
+
+  root.querySelectorAll("[data-pr-key]").forEach((card) => {
+    let startX = 0;
+    let startY = 0;
+    card.addEventListener("pointerdown", (event) => {
+      startX = event.clientX;
+      startY = event.clientY;
+      card.setPointerCapture?.(event.pointerId);
+    });
+    card.addEventListener("pointerup", (event) => {
+      const dx = event.clientX - startX;
+      const dy = Math.abs(event.clientY - startY);
+      if (dx > 76 && dy < 44) hideHomePr(card.dataset.prKey);
     });
   });
 
