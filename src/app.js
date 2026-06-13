@@ -161,6 +161,8 @@ const sectionHomeScreens = { training: "home", nutrition: "home", recovery: "hom
 
 let state = loadState();
 let screen = !state.onboardingComplete ? "onboarding" : state.activeWorkout ? "workout" : "home";
+let activePopup = null; // null | 'log-meal' | 'add-weight' | 'add-supplement' | 'recovery-checkin'
+let workoutTimerInterval = null;
 let lastRenderedScreen = screen;
 let lastRenderedMode = state.activeMode;
 let selectedExerciseId = "bench-press";
@@ -1920,6 +1922,7 @@ function saveRecoveryFromForm(form) {
     deletedAt: null
   };
   state.recoveryCheckIns = [checkIn, ...state.recoveryCheckIns.filter((item) => item.date !== checkIn.date)];
+  activePopup = null;
   saveState();
   render();
 }
@@ -2640,6 +2643,7 @@ function saveMealFromForm(form) {
   mealPhotoData = "";
   barcodeDraft = "";
   barcodeLookupStatus = "";
+  activePopup = null;
   createAutoBackup("Saved meal");
   render();
 }
@@ -2652,6 +2656,7 @@ function saveBodyweightFromForm(form) {
   state.nutritionSettings.bodyweight = weight;
   state.nutritionSettings.updatedAt = new Date().toISOString();
   bodyweightDraft = "";
+  activePopup = null;
   createAutoBackup("Logged bodyweight");
   render();
 }
@@ -2668,6 +2673,7 @@ function saveSupplementFromForm(form) {
     notes: form.supplementNotes.value || ""
   }));
   supplementDraft = { type: "creatine", amount: "", timing: "", notes: "" };
+  activePopup = null;
   createAutoBackup(`Logged ${type}`);
   render();
 }
@@ -2814,8 +2820,30 @@ function isSwipeBlocked(target) {
   return Boolean(target.closest("input, textarea, select, button, label, .set-row, .workout-card, .bottom-nav, .mode-switch, .global-actions"));
 }
 
+function updateThemeColors() {
+  const mode = state.activeMode || "training";
+  const accentColors = {
+    training: "139, 92, 255", // purple
+    nutrition: "255, 83, 107", // red
+    recovery: "74, 168, 255", // blue
+    progress: "38, 217, 108"  // green
+  };
+  document.documentElement.style.setProperty("--accent-rgb", accentColors[mode] || accentColors.training);
+}
+
+function updateWorkoutTimer() {
+  const el = document.getElementById("workout-timer-display");
+  if (!el || !state.activeWorkout) {
+    clearInterval(workoutTimerInterval);
+    workoutTimerInterval = null;
+    return;
+  }
+  el.textContent = formatClock(secondsSince(state.activeWorkout.startedAt));
+}
+
 function render() {
   nowTick = Date.now();
+  updateThemeColors();
   const app = document.querySelector("#app");
   const shouldResetScroll = screen !== lastRenderedScreen || state.activeMode !== lastRenderedMode;
   const renderedScreen = screenContent();
@@ -2825,8 +2853,21 @@ function render() {
       ${renderedScreen}
     </main>
     ${bottomNav()}
+    ${renderPopup()}
   `;
   bindEvents(app);
+
+  if (screen === "workout") {
+    if (!workoutTimerInterval) {
+      workoutTimerInterval = setInterval(updateWorkoutTimer, 1000);
+    }
+  } else {
+    if (workoutTimerInterval) {
+      clearInterval(workoutTimerInterval);
+      workoutTimerInterval = null;
+    }
+  }
+
   if (shouldResetScroll) {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }
@@ -2935,15 +2976,109 @@ function trainingDashboard() {
 
 function nutritionDashboard() {
   const totals = nutritionTotals();
-  const caloriesLeft = Math.max(0, Number(state.nutritionSettings.calorieTarget || 0) - totals.calories);
-  const proteinLeft = Math.max(0, Number(state.nutritionSettings.proteinTarget || 0) - totals.protein);
+  const settings = state.nutritionSettings;
+  const recommendation = localCoachReply();
+
+  const remaining = Math.max(0, settings.calorieTarget - totals.calories);
+  const heroSubtitle = state.profile.goal + (settings.goalRate ? ` • ${settings.goalRate} lb/week` : "");
+
+  const meals = mealsForDate();
+  const weightHist = bodyweightHistory(7);
+  const latestWeight = weightHist.length ? weightHist.at(-1).value : (settings.bodyweight || "--");
+  const targetWeight = settings.targetBodyweight || "--";
+  const trend = weightHist.length >= 2 ? weightHist.at(-1).value - weightHist[0].value : 0;
+  const trendText = weightHist.length >= 2 ? (trend > 0 ? `+${trend.toFixed(1)} lb this week` : `${trend.toFixed(1)} lb this week`) : "Need more data";
+
   return `
-    <section class="today-card nutrition-today"><div><p class="eyebrow">Today</p><h2>${caloriesLeft} calories left</h2><span>${proteinLeft}g protein left</span></div><div class="today-score"><strong>${totals.protein}</strong><small>protein</small></div><button class="primary" data-screen="nutrition">Snap Meal</button></section>
-    <section class="visual-grid macro-grid"><article class="metric wide"><span>${totals.calories}</span><small>${state.nutritionSettings.calorieTarget} calorie target</small><i style="width:${macroPct(totals.calories, state.nutritionSettings.calorieTarget)}%"></i></article><article class="metric"><span>${latestBodyweight()} / ${state.nutritionSettings.targetBodyweight || 165}</span><small>Bodyweight</small></article></section>
-    <section class="panel"><div class="section-heading"><h2>Nutrition today</h2><button class="ghost" data-screen="nutrition">Open</button></div>${nutritionMiniCard()}</section>
-    ${collapsiblePanel("Supplements", `<section class="coach-note inset-note"><strong>${supplementStatus("creatine") ? "Creatine logged" : "Creatine not logged"}</strong><span>${supplementStatus("caffeine") ? "Caffeine logged today." : "Track caffeine timing so recovery advice has context."}</span></section>`, { open: false, meta: "Creatine/caffeine" })}
-    ${collapsiblePanel("Bodyweight trend", lineChart(bodyweightHistory(), "Log bodyweight to track gain pace.", "lb"), { open: false, meta: `${latestBodyweight()} lb` })}
-    ${collapsiblePanel("Meals", mealRows(), { open: false, meta: `${mealsForDate().length} today` })}
+    <header class="premium-hero">
+      <div class="premium-hero-main">
+        <div class="premium-hero-content">
+          <p class="eyebrow">Calories Remaining</p>
+          <h2>${remaining.toLocaleString()} left</h2>
+          <span>${totals.calories.toLocaleString()} logged of ${settings.calorieTarget.toLocaleString()}</span>
+        </div>
+        <div class="today-score">
+          <strong>${totals.protein}g</strong>
+          <small>Protein</small>
+        </div>
+      </div>
+      <div class="premium-hero-actions">
+        <button class="primary" data-action="open-popup" data-popup="log-meal">Log Meal</button>
+        <button class="secondary" data-action="open-popup" data-popup="add-weight">Add Weight</button>
+      </div>
+    </header>
+
+    <section class="premium-card">
+      <div class="section-heading"><h2>Macros Progress</h2></div>
+      <div class="premium-ring-group">
+        ${premiumRing(totals.protein, settings.proteinTarget, "Protein", "g")}
+        ${premiumRing(totals.carbs, settings.carbTarget, "Carbs", "g")}
+        ${premiumRing(totals.fats, settings.fatTarget, "Fats", "g")}
+      </div>
+    </section>
+
+    <section class="premium-card">
+      <div class="section-heading">
+        <h2>Weight Trend</h2>
+        <div class="action-row">
+          <div class="stat-badge">${latestWeight} / ${targetWeight} lb</div>
+          <div class="stat-badge ${trend > 0 ? "good-text" : ""}">${trendText}</div>
+        </div>
+      </div>
+      ${lineChart(weightHist, "Add weight to see trend.", "lb")}
+    </section>
+
+    <div class="premium-grid">
+      <section class="premium-card">
+        <div class="section-heading"><h2>Supps Today</h2><button class="ghost" data-action="open-popup" data-popup="add-supplement">+ Add</button></div>
+        <div class="supp-list">
+          ${supplementsForDate().length ? supplementsForDate().map(s => `
+            <div class="supp-item">
+              <div class="supp-item-info">
+                <strong>${capitalize(s.type)}</strong>
+                <span>${s.amount} ${s.timing ? `• ${s.timing}` : ""}</span>
+              </div>
+            </div>
+          `).join("") : `<p class="privacy-note">No supplements logged.</p>`}
+        </div>
+      </section>
+      <section class="premium-card">
+        <div class="section-heading"><h2>Top Stats</h2></div>
+        ${premiumStatCard("Calorie Gap", remaining, "", remaining < 200 ? "On target" : "Keep eating")}
+        ${premiumStatCard("Protein Gap", Math.max(0, settings.proteinTarget - totals.protein), "g", "")}
+      </section>
+    </div>
+
+    <section class="premium-card">
+      <div class="section-heading"><h2>Meals Today</h2><button class="ghost" data-screen="nutrition-history">History</button></div>
+      <div class="meal-grid">
+        ${meals.length ? meals.map(meal => `
+          <div class="meal-card-premium">
+            ${meal.photoThumbnail ? `<img src="${meal.photoThumbnail}" alt="${escapeAttr(meal.name)}">` : ""}
+            <div class="meal-card-info">
+              <strong>${meal.name}</strong>
+              <span>${meal.timing || "Anytime"}</span>
+            </div>
+            <div class="meal-card-macros">
+              ${meal.calories} cal • ${meal.protein}P
+            </div>
+          </div>
+        `).join("") : `
+          <div style="grid-column: span 2;">
+            ${emptyState("No meals logged", "Snap your first meal to see macros.")}
+            <button class="secondary full" style="margin-top: 10px;" data-action="open-popup" data-popup="log-meal">Capture Meal</button>
+          </div>
+        `}
+      </div>
+    </section>
+
+    <div class="insight-card">
+      <div class="icon-box">${iconSvg(navIcons.coach)}</div>
+      <div>
+        <strong>Coach Insight</strong>
+        <p>${recommendation}</p>
+      </div>
+    </div>
   `;
 }
 
@@ -3797,7 +3932,7 @@ function workoutScreen() {
           <h1>${exercise.name}</h1>
         </div>
         <div class="header-timer">
-          <strong>${formatClock(secondsSince(workout.startedAt))}</strong>
+          <strong id="workout-timer-display">${formatClock(secondsSince(workout.startedAt))}</strong>
         </div>
       </header>
 
@@ -3871,12 +4006,6 @@ function workoutScreen() {
       </div>
     </section>
   `;
-}
-
-function previousPerformanceLine(exerciseId) {
-  const history = exerciseHistory(exerciseId).slice(0, 3);
-  if (!history.length) return "No history yet. Use comfortable opening sets.";
-  return `Recent: ${history.map((set) => `${set.weight}x${set.reps}`).join(" / ")}`;
 }
 
 function completedExerciseSummary(item) {
@@ -4154,6 +4283,46 @@ function prSummaryCard(summary) {
   `;
 }
 
+function premiumRing(value, target, label, unit = "") {
+  const pct = Math.max(4, Math.min(100, (Number(value || 0) / Math.max(1, Number(target || 1))) * 100));
+  const dash = pct * 1.82; // 2 * PI * 29 = 182
+  return `
+    <div class="premium-ring-item">
+      <div class="premium-ring-container">
+        <svg viewBox="0 0 64 64">
+          <circle cx="32" cy="32" r="29"></circle>
+          <circle class="value" cx="32" cy="32" r="29" style="stroke-dasharray:${dash} 182"></circle>
+        </svg>
+        <strong>${Math.round(pct)}%</strong>
+      </div>
+      <span>${label}</span>
+      <small>${value}${unit}</small>
+    </div>
+  `;
+}
+
+function premiumStatCard(label, value, unit = "", subtext = "") {
+  return `
+    <div class="premium-stat-card">
+      <span>${label}</span>
+      <strong>${value}${unit}</strong>
+      ${subtext ? `<small>${subtext}</small>` : ""}
+    </div>
+  `;
+}
+
+function emptyStateCard(title, body, actionText = "", actionScreen = "", actionData = "") {
+  return `
+    <div class="premium-card empty-state-card">
+      <div class="empty">
+        <strong>${title}</strong>
+        <span>${body}</span>
+        ${actionText ? `<button class="secondary" data-screen="${actionScreen}" ${actionData}>${actionText}</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
 function readinessGauge(score) {
   const dash = Math.max(0, Math.min(100, score)) * 2.64;
   return `<div class="readiness-gauge"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle class="value" cx="50" cy="50" r="42" style="stroke-dasharray:${dash} 264"></circle></svg><strong>${score}</strong></div>`;
@@ -4279,7 +4448,7 @@ function lineChart(points, emptyText, unit = "lb") {
 }
 
 function bars(items, emptyText) {
-  if (!items.some((item) => item.value > 0)) return emptyState("No chart yet", emptyText);
+  if (!items || !items.some((item) => item.value > 0)) return emptyState("No chart yet", emptyText);
   const max = Math.max(...items.map((item) => item.value), 1);
   return `<div class="bar-chart">${items.map((item) => `<div><span style="height:${Math.max(6, (item.value / max) * 96)}%"></span><small>${item.label}</small></div>`).join("")}</div>`;
 }
@@ -4288,7 +4457,8 @@ function barList(values, emptyText) {
   const entries = Object.entries(values).sort((a, b) => b[1] - a[1]).slice(0, 7);
   if (!entries.length) return emptyState("No balance yet", emptyText);
   const max = Math.max(...entries.map((entry) => entry[1]), 1);
-  return `<div class="muscle-bars">${entries.map(([label, value]) => `<div><p><span>${label}</span><b>${value}</b></p><i style="width:${(value / max) * 100}%"></i></div>`).join("")}</div>`;
+  const modeClass = state.activeMode || "training";
+  return `<div class="muscle-bars bars-${modeClass}">${entries.map(([label, value]) => `<div><p><span>${label}</span><b>${value}</b></p><i style="width:${(value / max) * 100}%"></i></div>`).join("")}</div>`;
 }
 
 function nutritionMiniCard() {
@@ -4595,6 +4765,42 @@ function emptyState(title, body) {
   return `<div class="empty"><strong>${title}</strong><span>${body}</span></div>`;
 }
 
+function renderPopup() {
+  if (!activePopup) return "";
+
+  let content = "";
+  let title = "";
+
+  if (activePopup === 'log-meal') {
+    title = "Log Meal";
+    content = mealCaptureForm();
+  } else if (activePopup === 'add-weight') {
+    title = "Add Weight";
+    content = bodyweightForm(true);
+  } else if (activePopup === 'add-supplement') {
+    title = "Add Supplement";
+    content = supplementForm();
+  } else if (activePopup === 'recovery-checkin') {
+    title = "Recovery Check-In";
+    content = recoveryForm();
+  }
+
+  return `
+    <div class="popup-overlay" data-action="close-popup">
+      <div class="bottom-sheet" onclick="event.stopPropagation()">
+        <div class="sheet-handle"></div>
+        <div class="popup-header">
+          <h2>${title}</h2>
+          <button class="close-popup" data-action="close-popup">×</button>
+        </div>
+        <div class="popup-scroll-content">
+          ${content}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function escapeAttr(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("\"", "&quot;").replaceAll("<", "&lt;");
 }
@@ -4683,7 +4889,9 @@ function bindEvents(root) {
       if (action === "complete-onboarding") completeOnboarding();
       if (action === "skip-onboarding") completeOnboarding(false);
       if (action === "set-ai-context") { aiContextMode = button.dataset.mode || "quick"; render(); }
-      if (action === "set-mode") { state.activeMode = button.dataset.mode || "training"; activeSheet = ""; screen = "home"; saveState(); render(); }
+      if (action === "set-mode") { state.activeMode = button.dataset.mode || "training"; screen = "home"; activeSheet = ""; activePopup = null; saveState(); render(); }
+      if (action === "open-popup") { activePopup = button.dataset.popup; render(); }
+      if (action === "close-popup") { activePopup = null; render(); }
       if (action === "send-ai-chat") sendAiChat();
       if (action === "apply-ai-suggestion") applyAiSuggestion(button.dataset.id);
       if (action === "dismiss-ai-suggestion") dismissAiSuggestion(button.dataset.id);
