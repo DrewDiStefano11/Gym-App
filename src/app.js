@@ -32,7 +32,8 @@ const navIcons = {
   photos: "M5 7h4l1-2h4l1 2h4v12H5zM12 17a4 4 0 100-8 4 4 0 000 8z",
   prs: "M12 4l2.5 5 5.5.8-4 3.8.9 5.4L12 16l-4.9 2.6.9-5.4-4-3.8 5.5-.8z",
   hub: "M12 8.2a3.8 3.8 0 100 7.6 3.8 3.8 0 000-7.6zM4.8 14.7l-1.1 1.9 2.2 3.8 2.2-1a8.5 8.5 0 002.1 1.2l.3 2.4h4.4l.3-2.4a8.5 8.5 0 002.1-1.2l2.2 1 2.2-3.8-1.1-1.9c.1-.4.2-.9.2-1.4s-.1-1-.2-1.4l1.1-1.9-2.2-3.8-2.2 1a8.5 8.5 0 00-2.1-1.2L14.9 3h-4.4l-.3 2.4a8.5 8.5 0 00-2.1 1.2l-2.2-1-2.2 3.8 1.1 1.9c-.1.4-.2.9-.2 1.4s.1 1 .2 1.4z",
-  coach: "M12 3l2.2 5 5.3.5-4 3.5 1.2 5.2L12 14.5 7.3 17l1.2-5.2-4-3.5 5.3-.5z"
+  coach: "M12 3l2.2 5 5.3.5-4 3.5 1.2 5.2L12 14.5 7.3 17l1.2-5.2-4-3.5 5.3-.5z",
+  trash: "M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
 };
 
 const modeTabs = {
@@ -143,6 +144,8 @@ const sectionHomeScreens = { training: "home", nutrition: "home", recovery: "hom
 
 let state = loadState();
 let screen = !state.onboardingComplete ? "onboarding" : state.activeWorkout ? "workout" : "home";
+let activePopup = null; // null | 'log-meal' | 'add-weight' | 'add-supplement' | 'recovery-checkin'
+let workoutTimerInterval = null;
 let lastRenderedScreen = screen;
 let lastRenderedMode = state.activeMode;
 let selectedExerciseId = "bench-press";
@@ -1542,7 +1545,6 @@ function toggleSet(itemIndex, setIndex) {
   if (set.completed) {
     const previousBest = bestSet(item.exerciseId);
     set.isPr = !previousBest || estimatedOneRepMax(set) > estimatedOneRepMax(previousBest);
-    startRest(set.restSeconds || 90);
   }
   saveState();
   render();
@@ -1560,9 +1562,8 @@ function completeExercise(itemIndex) {
     }
   });
   item.completedAt = new Date().toISOString();
-  startRest(restSuggestion(getExercise(item.exerciseId), item));
   const next = state.activeWorkout.exercises.find((exercise, index) => index > itemIndex && !exercise.completedAt) || state.activeWorkout.exercises.find((exercise) => !exercise.completedAt);
-  if (next) selectedExerciseId = next.exerciseId;
+  if (next && !next.completedAt) selectedExerciseId = next.exerciseId;
   saveState();
   render();
 }
@@ -1897,6 +1898,7 @@ function saveRecoveryFromForm(form) {
     deletedAt: null
   };
   state.recoveryCheckIns = [checkIn, ...state.recoveryCheckIns.filter((item) => item.date !== checkIn.date)];
+  activePopup = null;
   saveState();
   render();
 }
@@ -2617,6 +2619,7 @@ function saveMealFromForm(form) {
   mealPhotoData = "";
   barcodeDraft = "";
   barcodeLookupStatus = "";
+  activePopup = null;
   createAutoBackup("Saved meal");
   render();
 }
@@ -2629,6 +2632,7 @@ function saveBodyweightFromForm(form) {
   state.nutritionSettings.bodyweight = weight;
   state.nutritionSettings.updatedAt = new Date().toISOString();
   bodyweightDraft = "";
+  activePopup = null;
   createAutoBackup("Logged bodyweight");
   render();
 }
@@ -2645,6 +2649,7 @@ function saveSupplementFromForm(form) {
     notes: form.supplementNotes.value || ""
   }));
   supplementDraft = { type: "creatine", amount: "", timing: "", notes: "" };
+  activePopup = null;
   createAutoBackup(`Logged ${type}`);
   render();
 }
@@ -2791,8 +2796,30 @@ function isSwipeBlocked(target) {
   return Boolean(target.closest("input, textarea, select, button, label, .set-row, .workout-card, .bottom-nav, .mode-switch, .global-actions"));
 }
 
+function updateThemeColors() {
+  const mode = state.activeMode || "training";
+  const accentColors = {
+    training: "139, 92, 255", // purple
+    nutrition: "255, 83, 107", // red
+    recovery: "74, 168, 255", // blue
+    progress: "38, 217, 108"  // green
+  };
+  document.documentElement.style.setProperty("--accent-rgb", accentColors[mode] || accentColors.training);
+}
+
+function updateWorkoutTimer() {
+  const el = document.getElementById("workout-timer-display");
+  if (!el || !state.activeWorkout) {
+    clearInterval(workoutTimerInterval);
+    workoutTimerInterval = null;
+    return;
+  }
+  el.textContent = formatClock(secondsSince(state.activeWorkout.startedAt));
+}
+
 function render() {
   nowTick = Date.now();
+  updateThemeColors();
   const app = document.querySelector("#app");
   const shouldResetScroll = screen !== lastRenderedScreen || state.activeMode !== lastRenderedMode;
   const renderedScreen = screenContent();
@@ -2802,8 +2829,21 @@ function render() {
       ${renderedScreen}
     </main>
     ${bottomNav()}
+    ${renderPopup()}
   `;
   bindEvents(app);
+
+  if (screen === "workout") {
+    if (!workoutTimerInterval) {
+      workoutTimerInterval = setInterval(updateWorkoutTimer, 1000);
+    }
+  } else {
+    if (workoutTimerInterval) {
+      clearInterval(workoutTimerInterval);
+      workoutTimerInterval = null;
+    }
+  }
+
   if (shouldResetScroll) {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }
@@ -2897,40 +2937,242 @@ function trainingDashboard() {
   const stats = appStats();
   const recommendation = state.recommendations[0] || buildRecommendation();
   const topGoal = activeLiftGoals()[0];
-  const recentPrs = stats.best.length ? stats.best.slice(0, 3).map(prRow).join("") : emptyState("No PRs yet", "Completed sets will build your PR timeline.");
+  const lastWorkout = stats.workouts[0];
+
+  const heroTitle = state.activeWorkout ? "In Progress" : (readinessScore() < 55 ? "Recover first" : "Next Workout");
+  const heroSubtitle = state.activeWorkout
+    ? state.activeWorkout.exercises.map(ex => getExercise(ex.exerciseId).name).slice(0, 2).join(" + ")
+    : recommendation.exercises.map((item) => getExercise(item.exerciseId).name).slice(0, 2).join(" + ");
+
   return `
-    <section class="today-card"><div><p class="eyebrow">Today</p><h2>${readinessScore() < 55 ? "Recover first" : "Train today"}</h2><span>${recommendation.exercises.map((item) => getExercise(item.exerciseId).name).slice(0, 2).join(" + ")}</span></div><div class="today-score"><strong>${readinessScore()}</strong><small>ready</small></div><button class="primary" data-action="start-recommendation" data-id="${recommendation.id}">Start Workout</button></section>
-    <section class="panel"><div class="section-heading"><h2>This week's body map</h2><button class="ghost" data-screen="progress">Details</button></div>${bodyHeatmap()}</section>
-    ${collapsiblePanel("Why today", `<div class="leader-row"><div><strong>${shortReason(recommendation.reasoning)}</strong><span>${weeklyVolume().toLocaleString()} lb this week. ${completedWorkouts(7).length}/${state.profile.trainingDaysPerWeek} sessions done.</span></div><b>${readinessScore()}</b></div>`, { open: false, meta: "Coach" })}
-    ${topGoal ? collapsiblePanel("Top lift goal", goalRow(topGoal), { open: false, meta: `${getExercise(topGoal.exerciseId).name} ${topGoal.targetE1rm}` }) : ""}
-    ${collapsiblePanel("Consistency", consistencyVisual(), { open: false, meta: `${completedWorkouts(7).length}/${state.profile.trainingDaysPerWeek}` })}
-    ${collapsiblePanel("Recent PRs", recentPrs, { open: false, meta: `${stats.best.length} logged` })}
+    <header class="premium-hero">
+      <div class="premium-hero-main">
+        <div class="premium-hero-content">
+          <p class="eyebrow">${heroTitle}</p>
+          <h2>${heroSubtitle}</h2>
+          <span>${state.activeWorkout ? "Resuming your active session." : shortReason(recommendation.reasoning)}</span>
+        </div>
+        <div class="readiness-badge">
+          <strong>${readinessScore()}</strong>
+          <span>Ready</span>
+        </div>
+      </div>
+      <div class="premium-hero-actions">
+        <button class="primary" data-action="${state.activeWorkout ? "go-workout" : "start-recommendation"}" ${state.activeWorkout ? "" : `data-id="${recommendation.id}"`}>
+          ${state.activeWorkout ? "Resume" : "Start Workout"}
+        </button>
+        <button class="secondary" data-screen="templates">Templates</button>
+      </div>
+    </header>
+
+    <section class="premium-card">
+      <div class="section-heading">
+        <h2>Muscle Recovery</h2>
+        <button class="ghost" data-screen="progress">Details</button>
+      </div>
+      ${bodyHeatmap()}
+    </section>
+
+    <div class="premium-grid">
+      <div class="premium-card">
+        <div class="section-heading"><h2>Weekly Volume</h2></div>
+        ${bars(weeklyBuckets(4).map(w => ({ label: w.label, value: w.volume })), "Log sets to see volume.")}
+      </div>
+      <div class="premium-card">
+        <div class="section-heading"><h2>Recent PRs</h2></div>
+        ${stats.best.length ? stats.best.slice(0, 2).map(pr => `<div class="stat-badge">${getExercise(pr.exercise.id).name}</div>`).join("") : "No PRs yet."}
+      </div>
+    </div>
+
+    ${lastWorkout ? `
+      <section class="premium-card">
+        <div class="section-heading"><h2>Last Session</h2><small>${new Date(lastWorkout.finishedAt || lastWorkout.startedAt).toLocaleDateString()}</small></div>
+        <div class="leader-row">
+          <div>
+            <strong>${lastWorkout.exercises.map(ex => getExercise(ex.exerciseId).name).slice(0, 2).join(", ")}</strong>
+            <span>${completedSets(lastWorkout)} sets • ${workoutVolume(lastWorkout).toLocaleString()} lb</span>
+          </div>
+        </div>
+      </section>
+    ` : ""}
+
+    ${topGoal ? `
+      <section class="premium-card">
+        <div class="section-heading"><h2>Training Goal</h2></div>
+        ${goalRow(topGoal)}
+      </section>
+    ` : emptyStateCard("No active goal", "Set a target lift to focus your progression.", "Set Goal", "goals")}
   `;
 }
 
 function nutritionDashboard() {
   const totals = nutritionTotals();
-  const caloriesLeft = Math.max(0, Number(state.nutritionSettings.calorieTarget || 0) - totals.calories);
-  const proteinLeft = Math.max(0, Number(state.nutritionSettings.proteinTarget || 0) - totals.protein);
+  const settings = state.nutritionSettings;
+  const recommendation = localCoachReply();
+
+  const remaining = Math.max(0, settings.calorieTarget - totals.calories);
+  const heroSubtitle = state.profile.goal + (settings.goalRate ? ` • ${settings.goalRate} lb/week` : "");
+
+  const meals = mealsForDate();
+  const weightHist = bodyweightHistory(7);
+  const latestWeight = weightHist.length ? weightHist.at(-1).value : (settings.bodyweight || "--");
+  const targetWeight = settings.targetBodyweight || "--";
+  const trend = weightHist.length >= 2 ? weightHist.at(-1).value - weightHist[0].value : 0;
+  const trendText = weightHist.length >= 2 ? (trend > 0 ? `+${trend.toFixed(1)} lb this week` : `${trend.toFixed(1)} lb this week`) : "Need more data";
+
   return `
-    <section class="today-card nutrition-today"><div><p class="eyebrow">Today</p><h2>${caloriesLeft} calories left</h2><span>${proteinLeft}g protein left</span></div><div class="today-score"><strong>${totals.protein}</strong><small>protein</small></div><button class="primary" data-screen="nutrition">Snap Meal</button></section>
-    <section class="visual-grid macro-grid"><article class="metric wide"><span>${totals.calories}</span><small>${state.nutritionSettings.calorieTarget} calorie target</small><i style="width:${macroPct(totals.calories, state.nutritionSettings.calorieTarget)}%"></i></article><article class="metric"><span>${latestBodyweight()} / ${state.nutritionSettings.targetBodyweight || 165}</span><small>Bodyweight</small></article></section>
-    <section class="panel"><div class="section-heading"><h2>Nutrition today</h2><button class="ghost" data-screen="nutrition">Open</button></div>${nutritionMiniCard()}</section>
-    ${collapsiblePanel("Supplements", `<section class="coach-note inset-note"><strong>${supplementStatus("creatine") ? "Creatine logged" : "Creatine not logged"}</strong><span>${supplementStatus("caffeine") ? "Caffeine logged today." : "Track caffeine timing so recovery advice has context."}</span></section>`, { open: false, meta: "Creatine/caffeine" })}
-    ${collapsiblePanel("Bodyweight trend", lineChart(bodyweightHistory(), "Log bodyweight to track gain pace.", "lb"), { open: false, meta: `${latestBodyweight()} lb` })}
-    ${collapsiblePanel("Meals", mealRows(), { open: false, meta: `${mealsForDate().length} today` })}
+    <header class="premium-hero">
+      <div class="premium-hero-main">
+        <div class="premium-hero-content">
+          <p class="eyebrow">Calories Remaining</p>
+          <h2>${remaining.toLocaleString()} left</h2>
+          <span>${totals.calories.toLocaleString()} logged of ${settings.calorieTarget.toLocaleString()}</span>
+        </div>
+        <div class="today-score">
+          <strong>${totals.protein}g</strong>
+          <small>Protein</small>
+        </div>
+      </div>
+      <div class="premium-hero-actions">
+        <button class="primary" data-action="open-popup" data-popup="log-meal">Log Meal</button>
+        <button class="secondary" data-action="open-popup" data-popup="add-weight">Add Weight</button>
+      </div>
+    </header>
+
+    <section class="premium-card">
+      <div class="section-heading"><h2>Macros Progress</h2></div>
+      <div class="premium-ring-group">
+        ${premiumRing(totals.protein, settings.proteinTarget, "Protein", "g")}
+        ${premiumRing(totals.carbs, settings.carbTarget, "Carbs", "g")}
+        ${premiumRing(totals.fats, settings.fatTarget, "Fats", "g")}
+      </div>
+    </section>
+
+    <section class="premium-card">
+      <div class="section-heading">
+        <h2>Weight Trend</h2>
+        <div class="action-row">
+          <div class="stat-badge">${latestWeight} / ${targetWeight} lb</div>
+          <div class="stat-badge ${trend > 0 ? "good-text" : ""}">${trendText}</div>
+        </div>
+      </div>
+      ${lineChart(weightHist, "Add weight to see trend.", "lb")}
+    </section>
+
+    <div class="premium-grid">
+      <section class="premium-card">
+        <div class="section-heading"><h2>Supps Today</h2><button class="ghost" data-action="open-popup" data-popup="add-supplement">+ Add</button></div>
+        <div class="supp-list">
+          ${supplementsForDate().length ? supplementsForDate().map(s => `
+            <div class="supp-item">
+              <div class="supp-item-info">
+                <strong>${capitalize(s.type)}</strong>
+                <span>${s.amount} ${s.timing ? `• ${s.timing}` : ""}</span>
+              </div>
+            </div>
+          `).join("") : `<p class="privacy-note">No supplements logged.</p>`}
+        </div>
+      </section>
+      <section class="premium-card">
+        <div class="section-heading"><h2>Top Stats</h2></div>
+        ${premiumStatCard("Calorie Gap", remaining, "", remaining < 200 ? "On target" : "Keep eating")}
+        ${premiumStatCard("Protein Gap", Math.max(0, settings.proteinTarget - totals.protein), "g", "")}
+      </section>
+    </div>
+
+    <section class="premium-card">
+      <div class="section-heading"><h2>Meals Today</h2><button class="ghost" data-screen="nutrition-history">History</button></div>
+      <div class="meal-grid">
+        ${meals.length ? meals.map(meal => `
+          <div class="meal-card-premium">
+            ${meal.photoThumbnail ? `<img src="${meal.photoThumbnail}" alt="${escapeAttr(meal.name)}">` : ""}
+            <div class="meal-card-info">
+              <strong>${meal.name}</strong>
+              <span>${meal.timing || "Anytime"}</span>
+            </div>
+            <div class="meal-card-macros">
+              ${meal.calories} cal • ${meal.protein}P
+            </div>
+          </div>
+        `).join("") : `
+          <div style="grid-column: span 2;">
+            ${emptyState("No meals logged", "Snap your first meal to see macros.")}
+            <button class="secondary full" style="margin-top: 10px;" data-action="open-popup" data-popup="log-meal">Capture Meal</button>
+          </div>
+        `}
+      </div>
+    </section>
+
+    <div class="insight-card">
+      <div class="icon-box">${iconSvg(navIcons.coach)}</div>
+      <div>
+        <strong>Coach Insight</strong>
+        <p>${recommendation}</p>
+      </div>
+    </div>
   `;
 }
 
 function recoveryDashboard() {
   const snapshot = latestReadinessSnapshot();
   const cardio = weeklyCardio();
+  const score = readinessScore();
+
+  const statusLabel = score >= 85 ? "Peak" : score >= 70 ? "Ready" : score >= 50 ? "Modify" : "Rest";
+  const statusText = {
+    "Peak": "Body is primed for a PR attempt.",
+    "Ready": "Recovery supports normal volume.",
+    "Modify": "Slight fatigue detected. Trim accessories.",
+    "Rest": "High fatigue. Consider a rest or active recovery day."
+  }[statusLabel];
+
+  const heroSubtitle = state.activeWorkout
+    ? "Workout in progress"
+    : statusText;
+
   return `
-    <section class="today-card recovery-today"><div><p class="eyebrow">Today</p><h2>${readinessScore() < 55 ? "Keep it light" : "Recovery supports training"}</h2><span>${actionableHealthCards()[0]}</span></div><div class="today-score"><strong>${readinessScore()}</strong><small>ready</small></div><button class="primary" data-screen="health">Check In</button></section>
-    <section class="visual-grid"><article class="metric"><span>${snapshot?.sleepHours || "--"}</span><small>Sleep hours</small></article><article class="metric"><span>${snapshot?.hrv || "--"}</span><small>HRV</small></article><article class="metric"><span>${cardio.minutes}</span><small>Cardio min/week</small></article><article class="metric"><span>${latestRecovery()?.stress || "--"}</span><small>Stress</small></article></section>
-    <section class="coach-note"><strong>${snapshot ? healthSourceSummary(snapshot) : "Manual recovery only"}</strong><span>${actionableHealthCards()[0]}</span></section>
-    ${collapsiblePanel("Recovery check-in", recoveryForm(), { open: false, meta: "2 min" })}
-    ${collapsiblePanel("Cardio support", cardioRows(), { open: false, meta: `${cardio.minutes} min` })}
+    <header class="premium-hero">
+      <div class="premium-hero-main">
+        <div class="premium-hero-content">
+          <p class="eyebrow">Readiness</p>
+          <h2>${score} / 100</h2>
+          <span>${heroSubtitle}</span>
+        </div>
+        <div class="readiness-badge">
+          <strong>${statusLabel}</strong>
+          <span>State</span>
+        </div>
+      </div>
+      <div class="premium-hero-actions">
+        <button class="primary" data-action="open-popup" data-popup="recovery-checkin">Check In</button>
+        <button class="secondary" data-screen="recovery-sleep">View Sleep</button>
+      </div>
+    </header>
+
+    <div class="premium-grid">
+      ${premiumStatCard("Sleep", snapshot?.sleepHours || "--", "h", snapshot?.sleepScore ? `${snapshot.sleepScore}% quality` : "")}
+      ${premiumStatCard("HRV", snapshot?.hrv || "--", "ms", "Recovery")}
+      ${premiumStatCard("RHR", snapshot?.restingHeartRate || "--", "bpm", "Load")}
+      ${premiumStatCard("Stress", latestRecovery()?.stress || "--", "/5", "Mental")}
+    </div>
+
+    <section class="premium-card">
+      <div class="section-heading"><h2>Steps Progress</h2><small>${snapshot?.steps?.toLocaleString() || 0} today</small></div>
+      <div class="metric i"><i style="width: ${macroPct(snapshot?.steps || 0, 10000)}%"></i></div>
+    </section>
+
+    <section class="premium-card">
+      <div class="section-heading"><h2>Muscle Soreness</h2><button class="ghost" data-screen="recovery-history">History</button></div>
+      ${latestRecovery() ? ringRow(latestRecovery().muscleSoreness || {}) : emptyState("No check-in", "Add a recovery log to see soreness.")}
+    </section>
+
+    <div class="insight-card">
+      <div class="icon-box">${iconSvg(navIcons.cardio)}</div>
+      <div>
+        <strong>Conditioning</strong>
+        <p>${cardio.minutes} min cardio this week. ${cardio.sessions} sessions total.</p>
+      </div>
+    </div>
   `;
 }
 
@@ -2938,13 +3180,73 @@ function progressDashboard() {
   const goals = activeLiftGoals().map(evaluatedGoal);
   const tracked = trackedLiftIds();
   const main = goals[0];
+  const lastPhoto = state.progressPhotos.filter(p => !p.deletedAt)[0];
+  const stats = appStats();
+
+  const heroTitle = main ? "Goal Progress" : "Progress Snapshot";
+  const heroSubtitle = main ? `${getExercise(main.exerciseId).name} to ${main.targetE1rm} lb` : "Track your gains.";
+  const prCount = stats.workouts.reduce((sum, w) => sum + w.exercises.reduce((exSum, item) => exSum + item.sets.filter(s => s.isPr).length, 0), 0);
+
   return `
-    <section class="today-card progress-today"><div><p class="eyebrow">Top goal</p><h2>${main ? `${getExercise(main.exerciseId).name} ${main.targetE1rm}` : "Set a target"}</h2><span>${main ? `${main.currentE1rm} current - ${daysUntil(main.targetDate)} days left` : "Add a lift goal to track the signal."}</span></div><div class="today-score"><strong>${main ? Math.round((main.currentE1rm / main.targetE1rm) * 100) : 0}%</strong><small>done</small></div><button class="primary" data-screen="goals">Goals</button></section>
-    <section class="panel"><div class="section-heading"><h2>Goal movement</h2><button class="ghost" data-screen="goals">Goals</button></div>${goals.length ? goals.slice(0, 3).map(goalRow).join("") : emptyState("No goals yet", "Add bench, bodyweight, or custom lift targets.")}</section>
-    ${collapsiblePanel("Tracked lifts", trackedLiftMiniRows(tracked), { open: false, meta: `${tracked.length}/6` })}
-    ${collapsiblePanel(`${getExercise(selectedExerciseId).name} trend`, lineChart(e1rmTrend(selectedExerciseId), "Log this lift to see strength trend."), { open: false, meta: "e1RM" })}
-    ${collapsiblePanel("Volume trend", bars(weeklyBuckets().map((week) => ({ label: week.label, value: week.volume })), "Weekly volume appears after workouts."), { open: false, meta: "Weekly" })}
-    ${collapsiblePanel("Cardio trend", bars(cardioTrend(), "Cardio minutes appear after treadmill, bike, run, walk, or stairmaster sessions."), { open: false, meta: "Minutes" })}
+    <header class="premium-hero">
+      <div class="premium-hero-main">
+        <div class="premium-hero-content">
+          <p class="eyebrow">${heroTitle}</p>
+          <h2>${heroSubtitle}</h2>
+          <span>${main ? `${daysUntil(main.targetDate)} days remaining to hit target.` : "Log workouts to build trends."}</span>
+        </div>
+        <div class="today-score">
+          <strong>${prCount}</strong>
+          <small>Total PRs</small>
+        </div>
+      </div>
+      <div class="premium-hero-actions">
+        <button class="primary" data-screen="progress-history">View Strength</button>
+        <button class="secondary" data-screen="progress-photos">Add Photo</button>
+      </div>
+    </header>
+
+    <div class="premium-grid">
+      <div class="premium-card">
+        <div class="section-heading"><h2>Strength</h2></div>
+        ${lineChart(e1rmTrend(selectedExerciseId, 7), "No history.", "lb")}
+      </div>
+      <div class="premium-card">
+        <div class="section-heading"><h2>Volume</h2></div>
+        ${bars(weeklyBuckets(4).map(w => ({ label: w.label, value: w.volume })), "No volume.")}
+      </div>
+    </div>
+
+    <section class="premium-card">
+      <div class="section-heading"><h2>Last Progress Photo</h2><button class="ghost" data-screen="progress-photos">Timeline</button></div>
+      ${lastPhoto ? `
+        <div class="premium-photo-preview" data-screen="progress-photos">
+          <img src="${lastPhoto.imageDataUrl}" alt="Latest progress">
+          <div class="premium-photo-overlay"><span>Tap to reveal</span></div>
+        </div>
+      ` : emptyState("No photos", "Add your first progress photo to see change.")}
+    </section>
+
+    <section class="premium-card">
+      <div class="section-heading"><h2>Top PRs</h2><button class="ghost" data-screen="progress-prs">Board</button></div>
+      ${stats.best.length ? stats.best.slice(0, 3).map(pr => `
+        <div class="leader-row">
+          <div>
+            <strong>${pr.exercise.name}</strong>
+            <span>${pr.set.weight} lb x ${pr.set.reps}</span>
+          </div>
+          <div class="stat-badge">${estimatedOneRepMax(pr.set)} e1RM</div>
+        </div>
+      `).join("") : emptyState("No PRs", "PRs will appear after workouts.")}
+    </section>
+
+    <div class="insight-card">
+      <div class="icon-box">${iconSvg(navIcons.goals)}</div>
+      <div>
+        <strong>Consistency</strong>
+        <p>${streakWeeks()} week streak. ${completedWorkouts(28).length} sessions in the last month.</p>
+      </div>
+    </div>
   `;
 }
 
@@ -3485,47 +3787,117 @@ function goalProjectionChart(goal) {
 function workoutScreen() {
   const workout = state.activeWorkout;
   if (!workout) return "";
-  const firstOpen = workout.exercises.find((workoutItem) => !workoutItem.completedAt) || workout.exercises[0];
-  const selected = workout.exercises.find((workoutItem) => workoutItem.exerciseId === selectedExerciseId) || firstOpen;
-  const item = selected?.completedAt ? firstOpen : selected;
+  const firstIncomplete = workout.exercises.find((ex) => !ex.completedAt);
+  const selected = workout.exercises.find((ex) => ex.exerciseId === selectedExerciseId);
+  const item = selected || firstIncomplete || workout.exercises[workout.exercises.length - 1];
+
   const currentIndex = Math.max(0, workout.exercises.indexOf(item));
   const exercise = getExercise(item.exerciseId);
-  const best = bestSet(exercise.id);
-  const suggestion = suggestedWeightFor(exercise.id, item);
-  const warnings = liveDataWarnings(workout);
-  const completed = workout.exercises.filter((workoutItem) => workoutItem.completedAt);
   const totalExercises = workout.exercises.length || 1;
+
+  const upNext = workout.exercises.filter((ex, idx) => idx > currentIndex && !ex.completedAt);
+  const completed = workout.exercises.filter((ex) => ex.completedAt);
+
   return `
     <section class="screen workout-screen">
-      <header class="workout-top"><div><p class="eyebrow">Exercise ${currentIndex + 1}/${totalExercises}</p><h1>${exercise.name}</h1></div><button class="secondary" data-action="finish-workout">Finish</button></header>
-      <section class="workout-lift-card">
-        <div class="lift-metrics"><div><small>Timer</small><strong>${restRemaining ? formatClock(restRemaining) : formatClock(secondsSince(workout.startedAt))}</strong></div><div><small>Best</small><strong>${best ? `${best.weight} x ${best.reps}` : "New"}</strong></div><div><small>Suggest</small><strong>${suggestion.weight ? `${suggestion.weight} lb` : "Open"}</strong></div></div>
-        <span>${suggestion.reason || previousPerformanceLine(exercise.id)}</span>
+      <header class="workout-top">
+        <div class="header-main">
+          <p class="eyebrow">Exercise ${currentIndex + 1} of ${totalExercises}</p>
+          <h1>${exercise.name}</h1>
+        </div>
+        <div class="header-timer">
+          <strong id="workout-timer-display">${formatClock(secondsSince(workout.startedAt))}</strong>
+        </div>
+      </header>
+
+      ${!item.completedAt ? `
+        <section class="set-panel active-exercise-panel">
+          <div class="set-head-new">
+            <span>Set</span>
+            <span>Weight</span>
+            <span>Reps</span>
+            <span>Type</span>
+            <span></span>
+          </div>
+          <div class="set-list">
+            ${item.sets.map((set, setIndex) => setRow(currentIndex, setIndex, set)).join("")}
+          </div>
+          <button class="secondary add-set-btn" data-action="add-set" data-item="${currentIndex}">+ Add Set</button>
+          <div class="exercise-actions">
+            <button class="primary full" data-action="complete-exercise" data-item="${currentIndex}">Complete Exercise</button>
+          </div>
+        </section>
+      ` : `
+        <div class="active-completed-summary">
+          ${completedExerciseSummary(item)}
+          ${firstIncomplete ? "" : "<p class='privacy-note' style='text-align:center;'>All exercises complete!</p>"}
+        </div>
+      `}
+
+      <section class="panel edit-exercises-panel">
+        <div class="section-heading">
+          <h2>Edit Exercises</h2>
+          <div class="header-actions">
+            <button class="ghost" data-screen="exercises">+ Add</button>
+            <button class="ghost" data-action="save-template">Save Template</button>
+          </div>
+        </div>
+        <div class="exercise-reorder-list">
+          ${workout.exercises.map((ex, idx) => `
+            <div class="reorder-item ${idx === currentIndex ? "active" : ""}" draggable="true" data-index="${idx}">
+              <div class="reorder-handle">⋮⋮</div>
+              <button class="reorder-name" data-action="select-workout-exercise" data-id="${ex.exerciseId}">${idx + 1}. ${getExercise(ex.exerciseId).name}</button>
+              <button class="danger-icon small" data-action="remove-exercise" data-item="${idx}">${iconSvg(navIcons.trash)}</button>
+            </div>
+          `).join("")}
+        </div>
       </section>
-      ${warnings.length ? `<section class="data-prompts">${warnings.map((warning) => `<span>${warning}</span>`).join("")}</section>` : ""}
-      <section class="set-panel simple-sets">
-        <div class="set-head simple"><span>Set</span><span>Weight</span><span>Reps</span></div>
-        ${item.sets.map((set, setIndex) => setRow(currentIndex, setIndex, set)).join("")}
-        <div class="workout-actions workout-actions-3"><button class="secondary" data-action="add-set" data-item="${currentIndex}">Add Set</button><button class="primary" data-action="complete-exercise" data-item="${currentIndex}">Complete Exercise</button><button class="danger-icon" aria-label="Remove exercise" data-action="remove-exercise" data-item="${currentIndex}">Trash</button></div>
-      </section>
-      ${completed.length ? `<section class="panel completed-queue"><div class="section-heading"><h2>Completed</h2><span>${completed.length}/${workout.exercises.length}</span></div>${completed.map(completedExerciseSummary).join("")}</section>` : ""}
-      <section class="exercise-picker compact-picker"><div class="section-heading"><h2>Queue</h2><button class="ghost" data-action="save-template">Save template</button></div><div class="chip-row">${workout.exercises.map((workoutItem, index) => `<button class="chip ${workoutItem.exerciseId === item.exerciseId ? "active" : ""} ${workoutItem.completedAt ? "done" : ""}" data-action="select-workout-exercise" data-id="${workoutItem.exerciseId}"><span>${index + 1}</span>${getExercise(workoutItem.exerciseId).name}</button>`).join("")}<button class="chip add" data-screen="exercises">+ Add</button><button class="chip add" data-screen="training-cardio">+ Cardio</button></div></section>
-      <div class="rest-pill ${restRemaining ? "running" : ""}"><span>Rest</span><strong>${restRemaining ? formatClock(restRemaining) : "Ready"}</strong><button data-action="start-rest">${restSuggestion(exercise, item)}s</button></div>
+
+      ${upNext.length > 0 ? `
+        <section class="panel up-next-panel">
+          <div class="section-heading"><h2>Up Next</h2></div>
+          <div class="up-next-list">
+            ${upNext.map((ex, idx) => `
+              <div class="up-next-item ${idx === 0 ? "next-immediate" : ""}">
+                <strong>${currentIndex + idx + 2}. ${getExercise(ex.exerciseId).name}</strong>
+              </div>
+            `).join("")}
+          </div>
+        </section>
+      ` : ""}
+
+      ${completed.length > 0 ? `
+        <section class="panel completed-panel">
+          <div class="section-heading"><h2>Completed</h2></div>
+          <div class="completed-list">
+            ${completed.filter(ex => ex.exerciseId !== item.exerciseId).map(completedExerciseSummary).join("")}
+          </div>
+        </section>
+      ` : ""}
+
+      <div class="finish-workout-area">
+        <button class="secondary full" data-action="finish-workout">Finish Workout</button>
+      </div>
     </section>
   `;
 }
 
-function previousPerformanceLine(exerciseId) {
-  const history = exerciseHistory(exerciseId).slice(0, 3);
-  if (!history.length) return "No history yet. Use comfortable opening sets.";
-  return `Recent: ${history.map((set) => `${set.weight}x${set.reps}`).join(" / ")}`;
-}
-
 function completedExerciseSummary(item) {
   const exercise = getExercise(item.exerciseId);
-  const doneSets = item.sets.filter((set) => set.completed || Number(set.weight) || Number(set.reps));
-  const volume = item.sets.reduce((total, set) => total + (Number(set.weight) || 0) * (Number(set.reps) || 0), 0);
-  return `<button class="completed-exercise" data-action="select-workout-exercise" data-id="${item.exerciseId}"><strong>${exercise.name}</strong><span>${doneSets.length} sets - ${volume.toLocaleString()} lb volume</span></button>`;
+  const doneSets = item.sets.filter((set) => set.completed);
+  const volume = doneSets.reduce((total, set) => total + (Number(set.weight) || 0) * (Number(set.reps) || 0), 0);
+  const totalReps = doneSets.reduce((total, set) => total + (Number(set.reps) || 0), 0);
+  const best = doneSets.reduce((b, set) => !b || (Number(set.weight) > Number(b.weight) || (Number(set.weight) === Number(b.weight) && Number(set.reps) > Number(b.reps))) ? set : b, null);
+
+  return `
+    <article class="completed-summary-card" data-action="select-workout-exercise" data-id="${item.exerciseId}">
+      <div class="summary-main">
+        <strong>${exercise.name}</strong>
+        <span>${doneSets.length} sets • ${totalReps} reps • ${volume.toLocaleString()} lb</span>
+      </div>
+      ${best ? `<div class="summary-best">Best: ${best.weight} × ${best.reps}</div>` : ""}
+    </article>
+  `;
 }
 
 function workoutToolCards(exercise, item, suggestion) {
@@ -3695,15 +4067,45 @@ function profileForm() {
 }
 
 function setRow(itemIndex, setIndex, set) {
-  const flags = [
-    ["isWarmup", "Warm"],
-    ["isDropSet", "Drop"],
-    ["isPartial", "Partial"],
-    ["toFailure", "Failure"],
-    ["isUnilateral", "1-side"],
-    ["isControlledTempo", "Tempo"]
+  const item = state.activeWorkout.exercises[itemIndex];
+  const history = exerciseHistory(item.exerciseId);
+  const prevSet = history[setIndex] || history[0];
+  const prevPerf = prevSet ? `${prevSet.weight} × ${prevSet.reps}` : "";
+
+  const typeOptions = [
+    ["Standard", ""],
+    ["Warmup", "isWarmup"],
+    ["Dropset", "isDropSet"],
+    ["Partial", "isPartial"],
+    ["Failure", "toFailure"],
+    ["Unilateral", "isUnilateral"],
+    ["Tempo", "isControlledTempo"]
   ];
-  return `<div class="set-row simple logger-row ${set.completed ? "complete" : ""} ${set.isWarmup ? "warmup" : ""}"><button class="set-number" data-action="remove-set" data-item="${itemIndex}" data-set="${setIndex}">${setIndex + 1}</button><label><small>Weight</small><input inputmode="decimal" value="${escapeAttr(set.weight)}" data-set-input="weight" data-item="${itemIndex}" data-set="${setIndex}" placeholder="0" /></label><label><small>Reps</small><input inputmode="numeric" value="${escapeAttr(set.reps)}" data-set-input="reps" data-item="${itemIndex}" data-set="${setIndex}" placeholder="${set.targetReps || 8}" /></label><button class="done-toggle" data-action="toggle-set" data-item="${itemIndex}" data-set="${setIndex}">${set.completed ? "Done" : "Tap"}</button><div class="set-tools compact-tags"><button data-action="copy-previous-set" data-item="${itemIndex}" data-set="${setIndex}">Same</button><button data-action="weight-down" data-item="${itemIndex}" data-set="${setIndex}">-5</button><button data-action="weight-up" data-item="${itemIndex}" data-set="${setIndex}">+5</button><button data-action="duplicate-set" data-item="${itemIndex}" data-set="${setIndex}">Copy</button>${flags.map(([flag, label]) => `<button class="${set[flag] ? "active" : ""}" data-action="toggle-set-flag" data-flag="${flag}" data-item="${itemIndex}" data-set="${setIndex}">${label}</button>`).join("")}</div></div>`;
+
+  const currentType = typeOptions.find(([label, flag]) => flag && set[flag])?.[0] || "Standard";
+
+  return `
+    <div class="set-row-new ${set.completed ? "complete" : ""}">
+      <div class="set-col-num">
+        <button class="set-num-btn" data-action="toggle-set" data-item="${itemIndex}" data-set="${setIndex}">${setIndex + 1}</button>
+      </div>
+      <div class="set-col-input">
+        <input inputmode="decimal" value="${escapeAttr(set.weight)}" data-set-input="weight" data-item="${itemIndex}" data-set="${setIndex}" placeholder="0" />
+        ${prevPerf ? `<small class="prev-perf">Prev: ${prevPerf}</small>` : ""}
+      </div>
+      <div class="set-col-input">
+        <input inputmode="numeric" value="${escapeAttr(set.reps)}" data-set-input="reps" data-item="${itemIndex}" data-set="${setIndex}" placeholder="${set.targetReps || 8}" />
+      </div>
+      <div class="set-col-type">
+        <select data-action="set-type-change" data-item="${itemIndex}" data-set="${setIndex}">
+          ${typeOptions.map(([label, flag]) => `<option value="${flag}" ${currentType === label ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </div>
+      <div class="set-col-del">
+        <button class="trash-btn" data-action="remove-set" data-item="${itemIndex}" data-set="${setIndex}">${iconSvg(navIcons.trash)}</button>
+      </div>
+    </div>
+  `;
 }
 
 function templateCard(template) {
@@ -3751,6 +4153,46 @@ function prSummaryCard(summary) {
         <article class="metric"><span>${setLine(summary.bestRepsAtWeight)}</span><small>Best reps at weight</small></article>
         <article class="metric"><span>${Number(summary.bestVolume.weight) * Number(summary.bestVolume.reps)}</span><small>Best set volume</small></article>
         <article class="metric"><span>${estimatedOneRepMax(summary.bestE1rm)}</span><small>Strength trend</small></article>
+      </div>
+    </div>
+  `;
+}
+
+function premiumRing(value, target, label, unit = "") {
+  const pct = Math.max(4, Math.min(100, (Number(value || 0) / Math.max(1, Number(target || 1))) * 100));
+  const dash = pct * 1.82; // 2 * PI * 29 = 182
+  return `
+    <div class="premium-ring-item">
+      <div class="premium-ring-container">
+        <svg viewBox="0 0 64 64">
+          <circle cx="32" cy="32" r="29"></circle>
+          <circle class="value" cx="32" cy="32" r="29" style="stroke-dasharray:${dash} 182"></circle>
+        </svg>
+        <strong>${Math.round(pct)}%</strong>
+      </div>
+      <span>${label}</span>
+      <small>${value}${unit}</small>
+    </div>
+  `;
+}
+
+function premiumStatCard(label, value, unit = "", subtext = "") {
+  return `
+    <div class="premium-stat-card">
+      <span>${label}</span>
+      <strong>${value}${unit}</strong>
+      ${subtext ? `<small>${subtext}</small>` : ""}
+    </div>
+  `;
+}
+
+function emptyStateCard(title, body, actionText = "", actionScreen = "", actionData = "") {
+  return `
+    <div class="premium-card empty-state-card">
+      <div class="empty">
+        <strong>${title}</strong>
+        <span>${body}</span>
+        ${actionText ? `<button class="secondary" data-screen="${actionScreen}" ${actionData}>${actionText}</button>` : ""}
       </div>
     </div>
   `;
@@ -3840,7 +4282,7 @@ function lineChart(points, emptyText, unit = "lb") {
 }
 
 function bars(items, emptyText) {
-  if (!items.some((item) => item.value > 0)) return emptyState("No chart yet", emptyText);
+  if (!items || !items.some((item) => item.value > 0)) return emptyState("No chart yet", emptyText);
   const max = Math.max(...items.map((item) => item.value), 1);
   return `<div class="bar-chart">${items.map((item) => `<div><span style="height:${Math.max(6, (item.value / max) * 96)}%"></span><small>${item.label}</small></div>`).join("")}</div>`;
 }
@@ -3849,7 +4291,8 @@ function barList(values, emptyText) {
   const entries = Object.entries(values).sort((a, b) => b[1] - a[1]).slice(0, 7);
   if (!entries.length) return emptyState("No balance yet", emptyText);
   const max = Math.max(...entries.map((entry) => entry[1]), 1);
-  return `<div class="muscle-bars">${entries.map(([label, value]) => `<div><p><span>${label}</span><b>${value}</b></p><i style="width:${(value / max) * 100}%"></i></div>`).join("")}</div>`;
+  const modeClass = state.activeMode || "training";
+  return `<div class="muscle-bars bars-${modeClass}">${entries.map(([label, value]) => `<div><p><span>${label}</span><b>${value}</b></p><i style="width:${(value / max) * 100}%"></i></div>`).join("")}</div>`;
 }
 
 function nutritionMiniCard() {
@@ -4156,6 +4599,42 @@ function emptyState(title, body) {
   return `<div class="empty"><strong>${title}</strong><span>${body}</span></div>`;
 }
 
+function renderPopup() {
+  if (!activePopup) return "";
+
+  let content = "";
+  let title = "";
+
+  if (activePopup === 'log-meal') {
+    title = "Log Meal";
+    content = mealCaptureForm();
+  } else if (activePopup === 'add-weight') {
+    title = "Add Weight";
+    content = bodyweightForm(true);
+  } else if (activePopup === 'add-supplement') {
+    title = "Add Supplement";
+    content = supplementForm();
+  } else if (activePopup === 'recovery-checkin') {
+    title = "Recovery Check-In";
+    content = recoveryForm();
+  }
+
+  return `
+    <div class="popup-overlay" data-action="close-popup">
+      <div class="bottom-sheet" onclick="event.stopPropagation()">
+        <div class="sheet-handle"></div>
+        <div class="popup-header">
+          <h2>${title}</h2>
+          <button class="close-popup" data-action="close-popup">×</button>
+        </div>
+        <div class="popup-scroll-content">
+          ${content}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function escapeAttr(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("\"", "&quot;").replaceAll("<", "&lt;");
 }
@@ -4236,7 +4715,9 @@ function bindEvents(root) {
       if (action === "complete-onboarding") completeOnboarding();
       if (action === "skip-onboarding") completeOnboarding(false);
       if (action === "set-ai-context") { aiContextMode = button.dataset.mode || "quick"; render(); }
-      if (action === "set-mode") { state.activeMode = button.dataset.mode || "training"; screen = "home"; saveState(); render(); }
+      if (action === "set-mode") { state.activeMode = button.dataset.mode || "training"; screen = "home"; activePopup = null; saveState(); render(); }
+      if (action === "open-popup") { activePopup = button.dataset.popup; render(); }
+      if (action === "close-popup") { activePopup = null; render(); }
       if (action === "send-ai-chat") sendAiChat();
       if (action === "apply-ai-suggestion") applyAiSuggestion(button.dataset.id);
       if (action === "dismiss-ai-suggestion") dismissAiSuggestion(button.dataset.id);
@@ -4247,6 +4728,88 @@ function bindEvents(root) {
       if (action === "toggle-set-flag") toggleSetFlag(Number(button.dataset.item), Number(button.dataset.set), button.dataset.flag);
     });
   });
+
+  root.querySelectorAll("[data-action='set-type-change']").forEach((select) => {
+    select.addEventListener("change", () => {
+      const itemIndex = Number(select.dataset.item);
+      const setIndex = Number(select.dataset.set);
+      const flag = select.value;
+      const set = state.activeWorkout.exercises[itemIndex].sets[setIndex];
+      ["isWarmup", "isDropSet", "isPartial", "toFailure", "isUnilateral", "isControlledTempo"].forEach((f) => {
+        set[f] = f === flag;
+      });
+      saveState();
+      render();
+    });
+  });
+
+  const reorderList = root.querySelector(".exercise-reorder-list");
+  if (reorderList) {
+    let draggedItem = null;
+
+    const handleDragStart = (item) => {
+      draggedItem = item;
+      item.classList.add("dragging");
+    };
+
+    const handleDragOver = (e, target) => {
+      if (target && target !== draggedItem) {
+        const rect = target.getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+        if (clientY < midpoint) {
+          target.before(draggedItem);
+        } else {
+          target.after(draggedItem);
+        }
+      }
+    };
+
+    const handleDragEnd = () => {
+      if (!draggedItem) return;
+      draggedItem.classList.remove("dragging");
+      const newOrder = Array.from(reorderList.querySelectorAll(".reorder-item")).map((el) => Number(el.dataset.index));
+      const exercises = state.activeWorkout.exercises;
+      const reordered = newOrder.map((idx) => exercises[idx]);
+      state.activeWorkout.exercises = reordered;
+      draggedItem = null;
+      saveState();
+      render();
+    };
+
+    reorderList.querySelectorAll(".reorder-item").forEach((item) => {
+      item.addEventListener("dragstart", (e) => {
+        e.dataTransfer.effectAllowed = "move";
+        handleDragStart(item);
+      });
+
+      item.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        handleDragOver(e, e.target.closest(".reorder-item"));
+      });
+
+      item.addEventListener("dragend", handleDragEnd);
+
+      // Touch support
+      item.addEventListener("touchstart", (e) => {
+        if (e.target.closest(".reorder-handle")) {
+          handleDragStart(item);
+        }
+      }, { passive: true });
+
+      item.addEventListener("touchmove", (e) => {
+        if (draggedItem) {
+          e.preventDefault();
+          const touch = e.touches[0];
+          const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest(".reorder-item");
+          handleDragOver(e, target);
+        }
+      }, { passive: false });
+
+      item.addEventListener("touchend", handleDragEnd);
+    });
+  }
 
   root.querySelectorAll("[data-set-input]").forEach((input) => {
     input.addEventListener("input", () => updateSet(Number(input.dataset.item), Number(input.dataset.set), input.dataset.setInput, input.value));
