@@ -177,6 +177,37 @@ async function handleMealEstimate(req, res) {
   }
 }
 
+async function handleRecoveryScreenshot(req, res) {
+  try {
+    rateLimit(req, "meal", mealLimit);
+    const { imageDataUrl } = await readJson(req);
+    if (!imageDataUrl) return sendJson(res, 400, { error: "Image is required." });
+    const instruction = "Extract visible WHOOP or recovery screenshot data. Return only compact JSON with keys: metrics and notes. metrics may include sleepHours, sleepScore, hrv, restingHeartRate, recoveryScore, strain. Use numbers only. Omit uncertain fields. Never invent values.";
+    const prompt = "Read this recovery screenshot/photo. Extract only clearly visible recovery and sleep values. If a value is not visible, omit it.";
+    let text = "";
+    if (provider === "gemini") {
+      text = await callGemini({ instruction, text: prompt, imageDataUrl });
+    } else {
+      const response = await callOpenAi({
+        model: openAiModel,
+        instructions: instruction,
+        input: [{
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            { type: "input_image", image_url: imageDataUrl }
+          ]
+        }]
+      });
+      text = response.output_text || response.output?.flatMap((item) => item.content || []).map((item) => item.text || "").join("\n") || "{}";
+    }
+    const extracted = extractJson(text, {});
+    sendJson(res, 200, { metrics: extracted.metrics || extracted, notes: extracted.notes || "Review extracted values before saving." });
+  } catch (error) {
+    sendJson(res, error.status || 500, { error: error.message || "Recovery screenshot extraction unavailable." });
+  }
+}
+
 async function handleBarcodeLookup(req, res) {
   try {
     const { barcode } = await readJson(req);
@@ -199,6 +230,7 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
     if (req.method === "POST" && url.pathname === "/api/ai/chat") return handleAiChat(req, res);
     if (req.method === "POST" && url.pathname === "/api/ai/meal-estimate") return handleMealEstimate(req, res);
+    if (req.method === "POST" && url.pathname === "/api/recovery/whoop-screenshot") return handleRecoveryScreenshot(req, res);
     if (req.method === "POST" && url.pathname === "/api/nutrition/barcode") return handleBarcodeLookup(req, res);
     const file = resolvePath(req.url || "/");
     const data = await readFile(file);
