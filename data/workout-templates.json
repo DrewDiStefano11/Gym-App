@@ -1,0 +1,462 @@
+[
+  {
+    "id": "push-day",
+    "name": "Push Day",
+    "goal": "Strength and Hypertrophy",
+    "experienceLevel": "Intermediate",
+    "estimatedDurationMinutes": 60,
+    "recommendedDaysPerWeek": 2,
+    "exercises": [
+      {
+        "exerciseId": "barbell-bench-press",
+        "sets": 3,
+        "targetReps": "8-10",
+        "restSeconds": 120,
+        "intensityNote": "RPE 8",
+        "optionalAlternativeExerciseIds": ["dumbbell-bench-press"]
+      },
+      {
+        "exerciseId": "overhead-press",
+        "sets": 3,
+        "targetReps": "8-10",
+        "restSeconds": 120,
+        "intensityNote": "RPE 8",
+        "optionalAlternativeExerciseIds": ["dumbbell-shoulder-press"]
+      },
+      {
+        "exerciseId": "incline-dumbbell-press",
+        "sets": 3,
+        "targetReps": "10-12",
+        "restSeconds": 90,
+        "intensityNote": "Controlled reps",
+        "optionalAlternativeExerciseIds": ["machine-chest-press"]
+      },
+      {
+        "exerciseId": "lateral-raise",
+        "sets": 3,
+        "targetReps": "12-15",
+        "restSeconds": 60,
+        "intensityNote": "Burnout",
+        "optionalAlternativeExerciseIds": ["cable-lateral-raise"]
+      },
+      {
+        "exerciseId": "tricep-pushdown",
+        "sets": 3,
+        "targetReps": "12-15",
+        "restSeconds": 60,
+        "intensityNote": "Slow eccentric",
+        "optionalAlternativeExerciseIds": ["skullcrushers"]
+      }
+    ]
+  },
+  {
+    "id": "pull-day",
+    "name": "Pull Day",
+    "goal": "Back and Bicep Development",
+    "experienceLevel": "Intermediate",
+    "estimatedDurationMinutes": 60,
+    "recommendedDaysPerWeek": 2,
+    "exercises": [
+      {
+        "exerciseId": "deadlift",
+        "sets": 3,
+        "targetReps": "5",
+        "restSeconds": 180,
+        "intensityNote": "Heavy",
+        "optionalAlternativeExerciseIds": ["trap-bar-deadlift"]
+      },
+      {
+        "exerciseId": "pull-ups",
+        "sets": 3,
+        "targetReps": "Failure",
+        "restSeconds": 90,
+        "intensityNote": "Strict form",
+        "optionalAlternativeExerciseIds": ["lat-pulldown"]
+      },
+      {
+        "exerciseId": "bent-over-row",
+        "sets": 3,
+        "targetReps": "8-12",
+        "restSeconds": 90,
+        "intensityNote": "Squeeze lats",
+        "optionalAlternativeExerciseIds": ["seated-cable-row"]
+      },
+      {
+        "exerciseId": "face-pulls",
+        "sets": 3,
+        "targetReps": "15-20",
+        "restSeconds": 60,
+        "intensityNote": "Rear delt focus",
+        "optionalAlternativeExerciseIds": ["reverse-fly"]
+      },
+      {
+        "exerciseId": "barbell-curl",
+        "sets": 3,
+        "targetReps": "10-12",
+        "restSeconds": 60,
+        "intensityNote": "No swinging",
+        "optionalAlternativeExerciseIds": ["dumbbell-curl"]
+      }
+    ]
+  },
+  {
+    "id": "legs-day",
+    "name": "Legs Day",
+    "goal": "Lower Body Strength",
+    "experienceLevel": "Intermediate",
+    "estimatedDurationMinutes": 65,
+    "recommendedDaysPerWeek": 2,
+    "exercises": [
+      {
+        "exerciseId": "barbell-squat",
+        "sets": 3,
+        "targetReps": "6-8",
+        "restSeconds": 150,
+        "intensityNote": "Consistent depth",
+        "optionalAlternativeExerciseIds": ["leg-press"]
+      },
+      {
+        "exerciseId": "romanian-deadlift",
+        "sets": 3,
+        "targetReps": "10-12",
+        "restSeconds": 120,
+        "intensityNote": "Focus on stretch",
+        "optionalAlternativeExerciseIds": ["lying-leg-curl"]
+      },
+      {
+        "exerciseId": "bulgarian-split-squat",
+        "sets": 3,
+        "targetReps": "8-12",
+        "restSeconds": 90,
+        "intensityNote": "Maintain balance",
+        "optionalAlternativeExerciseIds": ["lunges"]
+      },
+      {
+        "exerciseId": "standing-calf-raise",
+        "sets": 4,
+        "targetReps": "15-20",
+        "restSeconds": 60,
+        "intensityNote": "Pause at top",
+        "optionalAlternativeExerciseIds": ["seated-calf-raise"]
+      }
+    ]
+  },
+  {
+    "id": "upper-body",
+    "name": "Upper Body",
+    "goal": "Balanced Upper Development",
+    "experienceLevel": "Intermediate",
+    "estimatedDurationMinutes": 60,
+    "recommendedDaysPerWeek": 2,
+    "exercises": [
+      {
+        "exerciseId": "dumbbell-bench-press",
+        "sets": 3,
+        "targetReps": "10-12",
+        "restSeconds": 90,
+        "intensityNote": "Good ROM",
+        "optionalAlternativeExerciseIds": ["barbell-bench-press"]
+      },
+      {
+        "exerciseId": "seated-cable-row",
+        "sets": 3,
+        "targetReps": "10-12",
+        "restSeconds": 90,
+        "intensityNote": "Squeeze back",
+        "optionalAlternativeExerciseIds": ["bent-over-row"]
+      },
+      {
+        "exerciseId": "military-press",
+        "sets": 3,
+        "targetReps": "8-10",
+        "restSeconds": 120,
+        "intensityNote": "Strict form",
+        "optionalAlternativeExerciseIds": ["overhead-press"]
+      },
+      {
+        "exerciseId": "lat-pulldown",
+        "sets": 3,
+        "targetReps": "10-12",
+        "restSeconds": 90,
+        "intensityNote": "Wide grip",
+        "optionalAlternativeExerciseIds": ["pull-ups"]
+      },
+      {
+        "exerciseId": "hammer-curl",
+        "sets": 3,
+        "targetReps": "12",
+        "restSeconds": 60,
+        "intensityNote": "Neutral grip",
+        "optionalAlternativeExerciseIds": ["dumbbell-curl"]
+      }
+    ]
+  },
+  {
+    "id": "lower-body",
+    "name": "Lower Body",
+    "goal": "Lower Body Accessory Work",
+    "experienceLevel": "Intermediate",
+    "estimatedDurationMinutes": 55,
+    "recommendedDaysPerWeek": 2,
+    "exercises": [
+      {
+        "exerciseId": "leg-press",
+        "sets": 3,
+        "targetReps": "12-15",
+        "restSeconds": 90,
+        "intensityNote": "High volume",
+        "optionalAlternativeExerciseIds": ["hack-squat"]
+      },
+      {
+        "exerciseId": "lying-leg-curl",
+        "sets": 3,
+        "targetReps": "12-15",
+        "restSeconds": 60,
+        "intensityNote": "Constant tension",
+        "optionalAlternativeExerciseIds": ["seated-leg-curl"]
+      },
+      {
+        "exerciseId": "leg-extension",
+        "sets": 3,
+        "targetReps": "15",
+        "restSeconds": 60,
+        "intensityNote": "Quad pump",
+        "optionalAlternativeExerciseIds": ["goblet-squat"]
+      },
+      {
+        "exerciseId": "glute-bridge",
+        "sets": 3,
+        "targetReps": "20",
+        "restSeconds": 60,
+        "intensityNote": "Squeeze glutes",
+        "optionalAlternativeExerciseIds": ["hip-thrust"]
+      }
+    ]
+  },
+  {
+    "id": "full-body",
+    "name": "Full Body",
+    "goal": "Efficient General Fitness",
+    "experienceLevel": "Beginner",
+    "estimatedDurationMinutes": 45,
+    "recommendedDaysPerWeek": 3,
+    "exercises": [
+      {
+        "exerciseId": "goblet-squat",
+        "sets": 3,
+        "targetReps": "12-15",
+        "restSeconds": 90,
+        "intensityNote": "Master the form",
+        "optionalAlternativeExerciseIds": ["barbell-squat"]
+      },
+      {
+        "exerciseId": "pushups",
+        "sets": 3,
+        "targetReps": "AMRAP",
+        "restSeconds": 60,
+        "intensityNote": "Good control",
+        "optionalAlternativeExerciseIds": ["machine-chest-press"]
+      },
+      {
+        "exerciseId": "single-arm-db-row",
+        "sets": 3,
+        "targetReps": "12",
+        "restSeconds": 60,
+        "intensityNote": "Elbow to hip",
+        "optionalAlternativeExerciseIds": ["seated-cable-row"]
+      },
+      {
+        "exerciseId": "plank",
+        "sets": 3,
+        "targetReps": "45s",
+        "restSeconds": 45,
+        "intensityNote": "Tight core",
+        "optionalAlternativeExerciseIds": ["deadbug"]
+      }
+    ]
+  },
+  {
+    "id": "beginner-3day",
+    "name": "Beginner 3-Day Split",
+    "goal": "Build Base Strength",
+    "experienceLevel": "Beginner",
+    "estimatedDurationMinutes": 50,
+    "recommendedDaysPerWeek": 3,
+    "exercises": [
+      {
+        "exerciseId": "barbell-squat",
+        "sets": 3,
+        "targetReps": "8-10",
+        "restSeconds": 120,
+        "intensityNote": "Learn the rack",
+        "optionalAlternativeExerciseIds": ["goblet-squat"]
+      },
+      {
+        "exerciseId": "barbell-bench-press",
+        "sets": 3,
+        "targetReps": "8-10",
+        "restSeconds": 120,
+        "intensityNote": "Eyes under bar",
+        "optionalAlternativeExerciseIds": ["dumbbell-bench-press"]
+      },
+      {
+        "exerciseId": "bent-over-row",
+        "sets": 3,
+        "targetReps": "10-12",
+        "restSeconds": 90,
+        "intensityNote": "Back flat",
+        "optionalAlternativeExerciseIds": ["lat-pulldown"]
+      },
+      {
+        "exerciseId": "overhead-press",
+        "sets": 3,
+        "targetReps": "10",
+        "restSeconds": 90,
+        "intensityNote": "Strict",
+        "optionalAlternativeExerciseIds": ["dumbbell-shoulder-press"]
+      }
+    ]
+  },
+  {
+    "id": "strength-focus-4day",
+    "name": "Strength Focus 4-Day",
+    "goal": "Increase Big Lift Numbers",
+    "experienceLevel": "Advanced",
+    "estimatedDurationMinutes": 75,
+    "recommendedDaysPerWeek": 4,
+    "exercises": [
+      {
+        "exerciseId": "deadlift",
+        "sets": 5,
+        "targetReps": "3-5",
+        "restSeconds": 240,
+        "intensityNote": "High RPE",
+        "optionalAlternativeExerciseIds": ["sumo-deadlift"]
+      },
+      {
+        "exerciseId": "barbell-squat",
+        "sets": 5,
+        "targetReps": "3-5",
+        "restSeconds": 240,
+        "intensityNote": "Explosive up",
+        "optionalAlternativeExerciseIds": ["front-squat"]
+      },
+      {
+        "exerciseId": "close-grip-bench-press",
+        "sets": 3,
+        "targetReps": "8-10",
+        "restSeconds": 120,
+        "intensityNote": "Lockout focus",
+        "optionalAlternativeExerciseIds": ["tricep-pushdown"]
+      },
+      {
+        "exerciseId": "hyperextensions",
+        "sets": 3,
+        "targetReps": "15",
+        "restSeconds": 60,
+        "intensityNote": "Squeeze lower back",
+        "optionalAlternativeExerciseIds": ["good-mornings"]
+      }
+    ]
+  },
+  {
+    "id": "hypertrophy-5day",
+    "name": "Hypertrophy 5-Day PPLUL",
+    "goal": "Maximum Muscle Growth",
+    "experienceLevel": "Advanced",
+    "estimatedDurationMinutes": 70,
+    "recommendedDaysPerWeek": 5,
+    "exercises": [
+      {
+        "exerciseId": "incline-dumbbell-press",
+        "sets": 4,
+        "targetReps": "10-12",
+        "restSeconds": 90,
+        "intensityNote": "Upper chest pump",
+        "optionalAlternativeExerciseIds": ["chest-fly"]
+      },
+      {
+        "exerciseId": "single-arm-db-row",
+        "sets": 4,
+        "targetReps": "10-12",
+        "restSeconds": 60,
+        "intensityNote": "High volume",
+        "optionalAlternativeExerciseIds": ["bent-over-row"]
+      },
+      {
+        "exerciseId": "bulgarian-split-squat",
+        "sets": 3,
+        "targetReps": "10-12",
+        "restSeconds": 90,
+        "intensityNote": "Deep stretch",
+        "optionalAlternativeExerciseIds": ["leg-press"]
+      },
+      {
+        "exerciseId": "lateral-raise",
+        "sets": 4,
+        "targetReps": "15-20",
+        "restSeconds": 45,
+        "intensityNote": "Short rest",
+        "optionalAlternativeExerciseIds": ["cable-lateral-raise"]
+      },
+      {
+        "exerciseId": "tricep-pushdown",
+        "sets": 3,
+        "targetReps": "15",
+        "restSeconds": 45,
+        "intensityNote": "Hold squeeze",
+        "optionalAlternativeExerciseIds": ["skullcrushers"]
+      }
+    ]
+  },
+  {
+    "id": "deload-week",
+    "name": "Deload Week",
+    "goal": "Active Recovery",
+    "experienceLevel": "All",
+    "estimatedDurationMinutes": 40,
+    "recommendedDaysPerWeek": 3,
+    "exercises": [
+      {
+        "exerciseId": "goblet-squat",
+        "sets": 2,
+        "targetReps": "10",
+        "restSeconds": 60,
+        "intensityNote": "Light weight",
+        "optionalAlternativeExerciseIds": []
+      },
+      {
+        "exerciseId": "lat-pulldown",
+        "sets": 2,
+        "targetReps": "12",
+        "restSeconds": 60,
+        "intensityNote": "Focus on movement",
+        "optionalAlternativeExerciseIds": []
+      },
+      {
+        "exerciseId": "pushups",
+        "sets": 2,
+        "targetReps": "10",
+        "restSeconds": 60,
+        "intensityNote": "Easy sets",
+        "optionalAlternativeExerciseIds": []
+      },
+      {
+        "exerciseId": "deadbug",
+        "sets": 2,
+        "targetReps": "10 per side",
+        "restSeconds": 30,
+        "intensityNote": "Breath focus",
+        "optionalAlternativeExerciseIds": []
+      },
+      {
+        "exerciseId": "treadmill-run",
+        "sets": 1,
+        "targetReps": "15m",
+        "restSeconds": 0,
+        "intensityNote": "Light jog",
+        "optionalAlternativeExerciseIds": ["stationary-cycling"]
+      }
+    ]
+  }
+]
