@@ -469,6 +469,7 @@ function normalizeWorkout(workout) {
     deletedAt: workout.deletedAt || null,
     startedAt: workout.startedAt || new Date().toISOString(),
     finishedAt: workout.finishedAt || null,
+    currentIndex: workout.currentIndex ?? 0,
     notes: workout.notes || "",
     templateId: workout.templateId || null,
     recommendationId: workout.recommendationId || null,
@@ -476,6 +477,7 @@ function normalizeWorkout(workout) {
     exercises: (workout.exercises || []).map((item, order) => ({
       exerciseId: item.exerciseId,
       order: item.order ?? order,
+      isSuperset: Boolean(item.isSuperset),
       targetSets: item.targetSets || 3,
       targetRepMin: item.targetRepMin || 6,
       targetRepMax: item.targetRepMax || 10,
@@ -1563,13 +1565,23 @@ function newSet(weight = "", targetReps = 10, exerciseId = selectedExerciseId, i
 
 function addExerciseToWorkout(exerciseId) {
   if (!state.activeWorkout) return;
-  if (state.activeWorkout.exercises.some((item) => item.exerciseId === exerciseId)) {
-    selectedExerciseId = exerciseId;
-    screen = "workout";
-    render();
-    return;
-  }
-  state.activeWorkout.exercises.push({ exerciseId, order: state.activeWorkout.exercises.length, targetSets: 3, targetRepMin: 6, targetRepMax: 10, completedAt: null, sets: blankWorkoutSets(3, "", 10, exerciseId) });
+  const workout = state.activeWorkout;
+  const currentIdx = workout.currentIndex ?? 0;
+
+  const newEx = {
+    exerciseId,
+    order: workout.exercises.length,
+    isSuperset: false,
+    targetSets: 3,
+    targetRepMin: 6,
+    targetRepMax: 10,
+    completedAt: null,
+    sets: blankWorkoutSets(3, "", 10, exerciseId)
+  };
+
+  workout.exercises.splice(currentIdx + 1, 0, newEx);
+  workout.currentIndex = currentIdx + 1;
+
   selectedExerciseId = exerciseId;
   screen = "workout";
   saveState();
@@ -1598,6 +1610,13 @@ function toggleSet(itemIndex, setIndex) {
     const previousBest = bestSet(item.exerciseId);
     set.isPr = !previousBest || estimatedOneRepMax(set) > estimatedOneRepMax(previousBest);
   }
+
+  if (item.sets.every(s => s.completed)) {
+    item.completedAt = new Date().toISOString();
+  } else {
+    item.completedAt = null;
+  }
+
   saveState();
   render();
 }
@@ -1674,9 +1693,36 @@ function toggleSetFlag(itemIndex, setIndex, flag) {
 }
 
 function removeExerciseFromWorkout(itemIndex) {
-  if (!state.activeWorkout || state.activeWorkout.exercises.length <= 1) return;
-  state.activeWorkout.exercises.splice(itemIndex, 1);
-  selectedExerciseId = state.activeWorkout.exercises[0].exerciseId;
+  if (!state.activeWorkout) return;
+  const workout = state.activeWorkout;
+  const item = workout.exercises[itemIndex];
+  if (!item) return;
+
+  const hasData = item.sets.some(s => s.completed || s.weight || s.reps);
+  const msg = hasData
+    ? "This exercise has logged data. Are you sure you want to remove it from this workout?"
+    : "Remove this exercise?";
+
+  if (!confirm(msg)) return;
+
+  workout.exercises.splice(itemIndex, 1);
+
+  if (workout.currentIndex >= workout.exercises.length) {
+    workout.currentIndex = Math.max(0, workout.exercises.length - 1);
+  }
+
+  if (workout.exercises.length > 0) {
+    selectedExerciseId = workout.exercises[workout.currentIndex].exerciseId;
+  }
+
+  saveState();
+  render();
+}
+
+function cancelWorkout() {
+  if (!confirm("Are you sure you want to cancel? This will discard your current workout and all logged sets. This cannot be undone.")) return;
+  state.activeWorkout = null;
+  screen = "workout-start";
   saveState();
   render();
 }
@@ -2831,9 +2877,10 @@ function iconSvg(path) {
 
 function topAppActions() {
   if (screen === "onboarding") return "";
+  if (screen === "workout" || state.activeWorkout) return "";
   return `
-    <section class="global-topbar ${screen === "workout" ? "workout-global" : ""}">
-      ${screen === "workout" ? `<span class="workout-global-spacer"></span>` : modeSwitch("compact")}
+    <section class="global-topbar">
+      ${modeSwitch("compact")}
       <div class="global-actions">
         <button class="top-icon gear-button" data-screen="hub" aria-label="Open settings">${iconSvg(navIcons.hub)}</button>
       </div>
@@ -2878,6 +2925,9 @@ function updateWorkoutTimer() {
 }
 
 function render() {
+  if (state.activeWorkout && screen !== "review") {
+    screen = "workout";
+  }
   nowTick = Date.now();
   pruneAiMessages();
   updateThemeColors();
@@ -3434,7 +3484,7 @@ function assistantEmptyState() {
 }
 
 function floatingAssistant() {
-  if (screen === "onboarding") return "";
+  if (screen === "onboarding" || state.activeWorkout) return "";
   const messages = assistantMessages();
   const sheet = aiAssistantOpen ? `
       <section class="assistant-backdrop" data-action="close-ai-assistant"></section>
@@ -4061,25 +4111,70 @@ function goalProjectionChart(goal) {
   return `<div class="projection-stack">${lineChart(targetLine, "Set a goal to see the target path.")}${actual.length ? lineChart(actual, "Log sets to compare actual progress.") : emptyState("No recent actuals", "Completed sets will draw your real progress line.")}<div class="projection-legend"><span><i></i>Target path</span><span><i class="actual"></i>Actual/projection</span><strong>${goalStatusText(goal)}</strong></div></div>`;
 }
 
+function exerciseOverview(workout) {
+  return `
+    <div class="workout-overview">
+      <div class="overview-list" data-reorder-group="workout-exercises">
+        ${workout.exercises.map((ex, idx) => {
+          const exercise = getExercise(ex.exerciseId);
+          const isCurrent = idx === workout.currentIndex;
+          const isCompleted = Boolean(ex.completedAt);
+          const isSuperset = ex.isSuperset;
+          return `
+            <div class="overview-item ${isCurrent ? "active" : ""} ${isCompleted ? "completed" : ""} ${isSuperset ? "superset-group" : ""}"
+                 draggable="true" data-index="${idx}" data-action="jump-to-exercise" data-idx="${idx}">
+              <div class="overview-item-main">
+                <span class="overview-num">${idx + 1}</span>
+                <span class="overview-name">${exercise.name}</span>
+                ${isCompleted ? `<span class="overview-check">✓</span>` : ""}
+              </div>
+              ${isSuperset ? `<div class="superset-indicator">Superset</div>` : ""}
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function workoutScreen() {
   const workout = state.activeWorkout;
   if (!workout) return "";
-  const firstIncomplete = workout.exercises.find((ex) => !ex.completedAt);
-  const selected = workout.exercises.find((ex) => ex.exerciseId === selectedExerciseId);
-  const item = selected || firstIncomplete || workout.exercises[workout.exercises.length - 1];
 
-  const currentIndex = Math.max(0, workout.exercises.indexOf(item));
+  if (workout.currentIndex === undefined) workout.currentIndex = 0;
+  if (workout.currentIndex < 0) workout.currentIndex = 0;
+  if (workout.currentIndex >= workout.exercises.length) workout.currentIndex = Math.max(0, workout.exercises.length - 1);
+
+  const totalExercises = workout.exercises.length;
+  const item = workout.exercises[workout.currentIndex];
+
+  if (!item) {
+    return `
+      <section class="screen workout-screen">
+        <header class="workout-top">
+          <h1>Workout</h1>
+          <div class="header-timer">
+            <strong id="workout-timer-display">${formatClock(secondsSince(workout.startedAt))}</strong>
+          </div>
+        </header>
+        <section class="panel">
+          ${emptyState("Empty workout", "Add exercises from the library to begin.")}
+          <button class="primary full" data-screen="exercises">Add Exercise</button>
+        </section>
+        <div class="finish-workout-area">
+          <button class="danger-icon full" data-action="cancel-workout">Cancel Workout</button>
+        </div>
+      </section>
+    `;
+  }
+
   const exercise = getExercise(item.exerciseId);
-  const totalExercises = workout.exercises.length || 1;
-
-  const upNext = workout.exercises.filter((ex, idx) => idx > currentIndex && !ex.completedAt);
-  const completed = workout.exercises.filter((ex) => ex.completedAt);
 
   return `
-    <section class="screen workout-screen">
+    <section class="screen workout-screen locked-active-mode">
       <header class="workout-top">
         <div class="header-main">
-          <p class="eyebrow">Exercise ${currentIndex + 1} of ${totalExercises}</p>
+          <p class="eyebrow">Exercise ${workout.currentIndex + 1} of ${totalExercises}</p>
           <h1>${exercise.name}</h1>
         </div>
         <div class="header-timer">
@@ -4087,73 +4182,45 @@ function workoutScreen() {
         </div>
       </header>
 
-      ${!item.completedAt ? `
-        <section class="set-panel active-exercise-panel">
-          <div class="set-head-new">
-            <span>Set</span>
-            <span>Weight</span>
-            <span>Reps</span>
-            <span>Type</span>
-            <span></span>
-          </div>
-          <div class="set-list">
-            ${item.sets.map((set, setIndex) => setRow(currentIndex, setIndex, set)).join("")}
-          </div>
-          <button class="secondary add-set-btn" data-action="add-set" data-item="${currentIndex}">+ Add Set</button>
-          <div class="exercise-actions">
-            <button class="primary full" data-action="complete-exercise" data-item="${currentIndex}">Complete Exercise</button>
-          </div>
-        </section>
-      ` : `
-        <div class="active-completed-summary">
-          ${completedExerciseSummary(item)}
-          ${firstIncomplete ? "" : "<p class='privacy-note' style='text-align:center;'>All exercises complete.</p>"}
-        </div>
-      `}
+      ${exerciseOverview(workout)}
 
-      <section class="panel edit-exercises-panel">
+      <section class="set-panel active-exercise-panel">
         <div class="section-heading">
-          <h2>Edit Exercises</h2>
+          <h2>Sets</h2>
           <div class="header-actions">
-            <button class="ghost" data-screen="exercises">+ Add</button>
-            <button class="ghost" data-action="save-template">Save Template</button>
+            <button class="ghost" data-action="toggle-superset" data-item="${workout.currentIndex}">${item.isSuperset ? "Unbind Superset" : "Start Superset"}</button>
           </div>
         </div>
-        <div class="exercise-reorder-list">
-          ${workout.exercises.map((ex, idx) => `
-            <div class="reorder-item ${idx === currentIndex ? "active" : ""}" draggable="true" data-index="${idx}">
-              <div class="reorder-handle">::</div>
-              <button class="reorder-name" data-action="select-workout-exercise" data-id="${ex.exerciseId}">${idx + 1}. ${getExercise(ex.exerciseId).name}</button>
-              <button class="danger-icon small" data-action="remove-exercise" data-item="${idx}">${iconSvg(navIcons.trash)}</button>
-            </div>
-          `).join("")}
+        <div class="set-head-new">
+          <span>Set</span>
+          <span>Weight</span>
+          <span>Reps</span>
+          <span>Type</span>
+          <span></span>
+        </div>
+        <div class="set-list">
+          ${item.sets.map((set, setIndex) => setRow(workout.currentIndex, setIndex, set)).join("")}
+        </div>
+        <button class="secondary add-set-btn" data-action="add-set" data-item="${workout.currentIndex}">+ Add Set</button>
+      </section>
+
+      <div class="workout-nav-grid">
+        <button class="secondary" data-action="prev-exercise" ${workout.currentIndex === 0 ? "disabled" : ""}>Previous</button>
+        <button class="secondary" data-action="next-exercise" ${workout.currentIndex === totalExercises - 1 ? "disabled" : ""}>Next</button>
+      </div>
+
+      <section class="panel workout-utility-panel">
+        <div class="section-heading"><h2>Options</h2></div>
+        <div class="compact-actions">
+          <button class="secondary" data-screen="exercises">Add Lift</button>
+          <button class="secondary" data-action="remove-exercise" data-item="${workout.currentIndex}">Remove</button>
+          <button class="secondary" data-action="save-template">Save Template</button>
         </div>
       </section>
 
-      ${upNext.length > 0 ? `
-        <section class="panel up-next-panel">
-          <div class="section-heading"><h2>Up Next</h2></div>
-          <div class="up-next-list">
-            ${upNext.map((ex, idx) => `
-              <div class="up-next-item ${idx === 0 ? "next-immediate" : ""}">
-                <strong>${currentIndex + idx + 2}. ${getExercise(ex.exerciseId).name}</strong>
-              </div>
-            `).join("")}
-          </div>
-        </section>
-      ` : ""}
-
-      ${completed.length > 0 ? `
-        <section class="panel completed-panel">
-          <div class="section-heading"><h2>Completed</h2></div>
-          <div class="completed-list">
-            ${completed.filter((ex) => ex.exerciseId !== item.exerciseId).map(completedExerciseSummary).join("")}
-          </div>
-        </section>
-      ` : ""}
-
       <div class="finish-workout-area">
-        <button class="secondary full" data-action="finish-workout">Finish Workout</button>
+        <button class="primary full" data-action="finish-workout">Finish Workout</button>
+        <button class="danger-icon full" data-action="cancel-workout" style="margin-top: 12px;">Cancel Workout</button>
       </div>
     </section>
   `;
@@ -4451,6 +4518,11 @@ function setRow(itemIndex, setIndex, set) {
       </div>
       <div class="set-col-del">
         <button class="trash-btn" data-action="remove-set" data-item="${itemIndex}" data-set="${setIndex}">${iconSvg(navIcons.trash)}</button>
+      </div>
+      <div class="set-advanced-toggles">
+        <button class="toggle-pill ${set.isDropSet ? "active" : ""}" data-action="toggle-set-flag" data-item="${itemIndex}" data-set="${setIndex}" data-flag="isDropSet">Drop</button>
+        <button class="toggle-pill ${set.isPartial ? "active" : ""}" data-action="toggle-set-flag" data-item="${itemIndex}" data-set="${setIndex}" data-flag="isPartial">Partial</button>
+        <button class="toggle-pill ${set.isUnilateral ? "active" : ""}" data-action="toggle-set-flag" data-item="${itemIndex}" data-set="${setIndex}" data-flag="isUnilateral">Uni</button>
       </div>
     </div>
   `;
@@ -4970,7 +5042,7 @@ function goalRow(goal) {
 }
 
 function bottomNav() {
-  if (screen === "onboarding" || screen === "workout") return "";
+  if (screen === "onboarding" || screen === "workout" || state.activeWorkout) return "";
   const items = currentModeTabs();
   return `<nav class="bottom-nav section-nav mode-${state.activeMode || "training"}">${items.map(([id, label, path]) => `<button class="${screen === id || (id === "home" && screen === "home") ? "active" : ""}" data-screen="${id}" ${id !== "hub" ? `data-mode="${state.activeMode}"` : ""}>${iconSvg(path)}<span>${label}</span></button>`).join("")}</nav>`;
 }
@@ -5039,6 +5111,10 @@ function escapeHtml(value) {
 function bindEvents(root) {
   root.querySelectorAll("[data-screen]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (state.activeWorkout && button.dataset.screen !== "review" && button.dataset.screen !== "workout") {
+        alert("Finish or cancel your workout before navigating.");
+        return;
+      }
       const next = button.dataset.screen;
       if (button.dataset.mode) state.activeMode = button.dataset.mode;
       if (next === "workout" && !state.activeWorkout) startWorkout();
@@ -5060,10 +5136,17 @@ function bindEvents(root) {
       if (action === "build-and-start") startWorkout(null, buildRecommendation());
       if (action === "build-recommendation") { buildRecommendation(); screen = "coach"; render(); }
       if (action === "rebuild-weekly-plan") rebuildWeeklyPlan();
-      if (action === "start-planned-session") startPlannedSession(button.dataset.id);
-      if (action === "start-recommendation") startWorkout(null, state.recommendations.find((recommendation) => recommendation.id === button.dataset.id) || buildRecommendation());
+      if (action === "start-planned-session") {
+        if (state.activeWorkout && !confirm("Starting a new workout will replace your current active session. Continue?")) return;
+        startPlannedSession(button.dataset.id);
+      }
+      if (action === "start-recommendation") {
+        if (state.activeWorkout && !confirm("Starting a new workout will replace your current active session. Continue?")) return;
+        startWorkout(null, state.recommendations.find((recommendation) => recommendation.id === button.dataset.id) || buildRecommendation());
+      }
       if (action === "go-workout") { screen = "workout"; render(); }
       if (action === "finish-workout") finishWorkout();
+      if (action === "cancel-workout") cancelWorkout();
       if (action === "save-reviewed-workout") saveReviewedWorkout();
       if (action === "edit-workout") openWorkoutEditor(button.dataset.id);
       if (action === "delete-workout") deleteWorkout(button.dataset.id);
@@ -5141,7 +5224,18 @@ function bindEvents(root) {
         onboardingStep += 1;
         render();
       }
-      if (action === "set-mode") { state.activeMode = button.dataset.mode || "training"; screen = "home"; activeSheet = ""; activePopup = null; saveState(); render(); }
+      if (action === "set-mode") {
+        if (state.activeWorkout) {
+          alert("Finish or cancel your workout before switching modes.");
+          return;
+        }
+        state.activeMode = button.dataset.mode || "training";
+        screen = "home";
+        activeSheet = "";
+        activePopup = null;
+        saveState();
+        render();
+      }
       if (action === "open-popup") { activePopup = button.dataset.popup; render(); }
       if (action === "close-popup") { activePopup = null; render(); }
       if (action === "send-ai-chat") sendAiChat();
@@ -5152,6 +5246,35 @@ function bindEvents(root) {
       if (action === "clear-barcode") { barcodeDraft = ""; barcodeLookupStatus = ""; mealDraft.barcode = ""; if (state.pendingMealEstimate) state.pendingMealEstimate.barcode = ""; saveState(); render(); }
       if (action === "clear-meal-draft") { state.pendingMealEstimate = null; mealDraft = { name: "", calories: "", protein: "", carbs: "", fats: "", timing: "", barcode: "", notes: "" }; mealPhotoData = ""; barcodeDraft = ""; barcodeLookupStatus = ""; saveState(); render(); }
       if (action === "toggle-set-flag") toggleSetFlag(Number(button.dataset.item), Number(button.dataset.set), button.dataset.flag);
+      if (action === "prev-exercise") {
+        if (state.activeWorkout && state.activeWorkout.currentIndex > 0) {
+          state.activeWorkout.currentIndex--;
+          saveState();
+          render();
+        }
+      }
+      if (action === "next-exercise") {
+        if (state.activeWorkout && state.activeWorkout.currentIndex < state.activeWorkout.exercises.length - 1) {
+          state.activeWorkout.currentIndex++;
+          saveState();
+          render();
+        }
+      }
+      if (action === "jump-to-exercise") {
+        if (state.activeWorkout) {
+          state.activeWorkout.currentIndex = Number(button.dataset.idx);
+          saveState();
+          render();
+        }
+      }
+      if (action === "toggle-superset") {
+        if (state.activeWorkout) {
+          const idx = Number(button.dataset.item);
+          state.activeWorkout.exercises[idx].isSuperset = !state.activeWorkout.exercises[idx].isSuperset;
+          saveState();
+          render();
+        }
+      }
     });
   });
 
@@ -5169,9 +5292,10 @@ function bindEvents(root) {
     });
   });
 
-  const reorderList = root.querySelector(".exercise-reorder-list");
-  if (reorderList) {
+  const reorderList = root.querySelector(".overview-list");
+  if (reorderList && state.activeWorkout) {
     let draggedItem = null;
+    const workout = state.activeWorkout;
 
     const handleDragStart = (item) => {
       draggedItem = item;
@@ -5182,7 +5306,7 @@ function bindEvents(root) {
       if (target && target !== draggedItem) {
         const rect = target.getBoundingClientRect();
         const midpoint = rect.top + rect.height / 2;
-        const clientY = event.clientY || event.touches?.[0]?.clientY;
+        const clientY = event.clientY || (event.touches ? event.touches[0].clientY : 0);
         if (clientY < midpoint) target.before(draggedItem);
         else target.after(draggedItem);
       }
@@ -5191,15 +5315,16 @@ function bindEvents(root) {
     const handleDragEnd = () => {
       if (!draggedItem) return;
       draggedItem.classList.remove("dragging");
-      const newOrder = Array.from(reorderList.querySelectorAll(".reorder-item")).map((item) => Number(item.dataset.index));
-      const exercises = state.activeWorkout.exercises;
-      state.activeWorkout.exercises = newOrder.map((index) => exercises[index]);
+      const currentEx = workout.exercises[workout.currentIndex];
+      const newOrder = Array.from(reorderList.querySelectorAll(".overview-item")).map((item) => Number(item.dataset.index));
+      workout.exercises = newOrder.map((index) => workout.exercises[index]);
+      workout.currentIndex = workout.exercises.indexOf(currentEx);
       draggedItem = null;
       saveState();
       render();
     };
 
-    reorderList.querySelectorAll(".reorder-item").forEach((item) => {
+    reorderList.querySelectorAll(".overview-item").forEach((item) => {
       item.addEventListener("dragstart", (event) => {
         event.dataTransfer.effectAllowed = "move";
         handleDragStart(item);
@@ -5207,17 +5332,17 @@ function bindEvents(root) {
       item.addEventListener("dragover", (event) => {
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
-        handleDragOver(event, event.target.closest(".reorder-item"));
+        handleDragOver(event, event.target.closest(".overview-item"));
       });
       item.addEventListener("dragend", handleDragEnd);
       item.addEventListener("touchstart", (event) => {
-        if (event.target.closest(".reorder-handle")) handleDragStart(item);
+        handleDragStart(item);
       }, { passive: true });
       item.addEventListener("touchmove", (event) => {
         if (!draggedItem) return;
         event.preventDefault();
         const touch = event.touches[0];
-        const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest(".reorder-item");
+        const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest(".overview-item");
         handleDragOver(event, target);
       }, { passive: false });
       item.addEventListener("touchend", handleDragEnd);

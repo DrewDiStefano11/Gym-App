@@ -642,7 +642,8 @@ h2 {
   cursor: grab;
 }
 
-.reorder-item.dragging {
+.reorder-item.dragging,
+.overview-item.dragging {
   opacity: 0.5;
   border-style: dashed;
 }
@@ -3739,4 +3740,126 @@ button {
   background: rgba(255, 255, 255, 0.05);
   padding: 6px 8px;
   border-radius: 6px;
+}
+
+/* Locked Active Workout Mode Styles */
+.locked-active-mode {
+  padding-top: max(14px, env(safe-area-inset-top));
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+.workout-overview {
+  margin: 8px 0 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.workout-overview::-webkit-scrollbar {
+  display: none;
+}
+
+.overview-list {
+  display: flex;
+  gap: 10px;
+  padding: 4px 2px;
+}
+
+.overview-item {
+  flex: 0 0 120px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.overview-item.active {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.2);
+}
+
+.overview-item.completed {
+  opacity: 0.8;
+}
+
+.overview-item-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.overview-num {
+  font-size: 10px;
+  font-weight: 850;
+  color: var(--soft);
+}
+
+.overview-name {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.overview-check {
+  color: var(--good);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.superset-group {
+  border-right-width: 4px;
+  border-right-color: var(--accent-2);
+}
+
+.superset-indicator {
+  font-size: 9px;
+  font-weight: 850;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+
+.workout-nav-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.set-advanced-toggles {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.toggle-pill {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.toggle-pill.active {
+  background: rgba(var(--accent-rgb), 0.2);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--text);
+}
+
+.workout-utility-panel {
+  margin-bottom: 20px;
 }
