@@ -3939,3 +3939,151 @@ button {
 .sheet-action-btn:active {
   transform: scale(0.98);
 }
+
+/* FitCore AI Assistant Styles */
+
+.floating-ai.workout-pos {
+  bottom: calc(142px + env(safe-area-inset-bottom));
+}
+
+.assistant-sheet.maximized {
+  width: min(100vw, 430px);
+  height: calc(100vh - env(safe-area-inset-top));
+  max-height: none;
+  border-radius: 0;
+  top: env(safe-area-inset-top);
+  bottom: 0;
+}
+
+.assistant-sheet.workout-safe {
+  bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
+.chat-bubble .chat-used {
+  font-size: 10px;
+  color: var(--soft);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+.bubble-suggestions {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.suggestion-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.suggestion-card.status-applied {
+  border-color: var(--good);
+  background: rgba(54, 209, 124, 0.05);
+}
+
+.suggestion-card.status-canceled {
+  opacity: 0.6;
+}
+
+.suggestion-card .card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.suggestion-card .card-header strong {
+  font-size: 14px;
+  color: var(--accent-2);
+}
+
+.suggestion-card .card-header span {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.preview-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.preview-fields label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.preview-fields input {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.suggestion-card .card-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.assistant-reminders {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.reminder-pill {
+  background: rgba(var(--accent-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.reminder-pill strong {
+  color: var(--text);
+}
+
+.reminder-pill span {
+  color: var(--muted);
+}
+
+.ai-set, .ai-row, .ai-row-meal {
+  border-left: 3px solid var(--accent) !important;
+}
+
+.status-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.status-pill.connected { background: var(--good); color: #000; }
+.status-pill.testing { background: var(--accent); color: #fff; }
+.status-pill.error { background: var(--danger); color: #fff; }
+.status-pill.not_configured { background: var(--soft); color: #fff; }
+
+.listening {
+  animation: pulse 1.5s infinite;
+  background: var(--danger) !important;
+  color: #fff !important;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
