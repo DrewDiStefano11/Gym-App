@@ -3863,3 +3863,79 @@ button {
 .workout-utility-panel {
   margin-bottom: 20px;
 }
+
+/* Refined Workout UI Polishing */
+.overview-item.add-item {
+  border-style: dashed;
+  background: transparent;
+  color: var(--soft);
+}
+
+.overview-item.add-item:active {
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.picker-list {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.workout-options-sheet {
+  display: grid;
+  gap: 20px;
+}
+
+.sheet-exercise-info {
+  text-align: center;
+  display: grid;
+  gap: 4px;
+}
+
+.sheet-exercise-info strong {
+  font-size: 20px;
+}
+
+.sheet-exercise-info span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.sheet-action-list {
+  display: grid;
+  gap: 12px;
+}
+
+.sheet-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--text);
+  font-weight: 700;
+  text-align: left;
+}
+
+.sheet-action-btn svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+
+.sheet-action-btn.active {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.15);
+}
+
+.sheet-action-btn.danger {
+  color: var(--danger);
+  border-color: rgba(255, 100, 117, 0.2);
+}
+
+.sheet-action-btn:active {
+  transform: scale(0.98);
+}

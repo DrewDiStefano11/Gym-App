@@ -4132,6 +4132,12 @@ function exerciseOverview(workout) {
             </div>
           `;
         }).join("")}
+        <button class="overview-item add-item" data-action="open-popup" data-popup="add-exercise">
+          <div class="overview-item-main">
+            <span class="overview-num">+</span>
+            <span class="overview-name">Add Lift</span>
+          </div>
+        </button>
       </div>
     </div>
   `;
@@ -4188,7 +4194,7 @@ function workoutScreen() {
         <div class="section-heading">
           <h2>Sets</h2>
           <div class="header-actions">
-            <button class="ghost" data-action="toggle-superset" data-item="${workout.currentIndex}">${item.isSuperset ? "Unbind Superset" : "Start Superset"}</button>
+            <button class="icon-ghost" data-action="open-popup" data-popup="exercise-options" aria-label="Exercise options">${iconSvg(navIcons.hub)}</button>
           </div>
         </div>
         <div class="set-head-new">
@@ -4202,20 +4208,6 @@ function workoutScreen() {
           ${item.sets.map((set, setIndex) => setRow(workout.currentIndex, setIndex, set)).join("")}
         </div>
         <button class="secondary add-set-btn" data-action="add-set" data-item="${workout.currentIndex}">+ Add Set</button>
-      </section>
-
-      <div class="workout-nav-grid">
-        <button class="secondary" data-action="prev-exercise" ${workout.currentIndex === 0 ? "disabled" : ""}>Previous</button>
-        <button class="secondary" data-action="next-exercise" ${workout.currentIndex === totalExercises - 1 ? "disabled" : ""}>Next</button>
-      </div>
-
-      <section class="panel workout-utility-panel">
-        <div class="section-heading"><h2>Options</h2></div>
-        <div class="compact-actions">
-          <button class="secondary" data-screen="exercises">Add Lift</button>
-          <button class="secondary" data-action="remove-exercise" data-item="${workout.currentIndex}">Remove</button>
-          <button class="secondary" data-action="save-template">Save Template</button>
-        </div>
       </section>
 
       <div class="finish-workout-area">
@@ -4281,7 +4273,10 @@ function reviewScreen() {
       <section class="score-grid"><article class="metric"><span>${review.sets}</span><small>Sets</small></article><article class="metric"><span>${review.volume.toLocaleString()}</span><small>Volume</small></article><article class="metric"><span>${review.prs.length}</span><small>PRs</small></article><article class="metric"><span>${readinessScore()}</span><small>Readiness</small></article></section>
       <section class="panel"><div class="section-heading"><h2>Muscles trained</h2></div>${barList(review.muscles, "No completed sets yet.")}</section>
       <section class="panel"><div class="section-heading"><h2>Session notes</h2></div>${review.warnings.length ? review.warnings.map((warning) => `<div class="history-set"><strong>${warning}</strong></div>`).join("") : emptyState("Looks clean", "No unusual or incomplete set data found.")}<p class="privacy-note">${review.readinessImpact}</p><p class="privacy-note">Next: ${review.nextSuggestion}</p></section>
-      <button class="primary full" data-action="save-reviewed-workout">Save Workout</button>
+      <div class="finish-actions" style="display: grid; gap: 12px;">
+        <button class="primary full" data-action="save-reviewed-workout">Save Workout</button>
+        <button class="secondary full" data-action="save-template">Save as Template</button>
+      </div>
     </section>
   `;
 }
@@ -4497,7 +4492,7 @@ function setRow(itemIndex, setIndex, set) {
     ["Unilateral", "isUnilateral"],
     ["Tempo", "isControlledTempo"]
   ];
-  const currentType = typeOptions.find(([label, flag]) => flag && set[flag])?.[0] || "Standard";
+  const currentFlag = typeOptions.find(([label, flag]) => flag && set[flag])?.[1] || "";
 
   return `
     <div class="set-row-new ${set.completed ? "complete" : ""}">
@@ -4513,16 +4508,11 @@ function setRow(itemIndex, setIndex, set) {
       </div>
       <div class="set-col-type">
         <select data-action="set-type-change" data-item="${itemIndex}" data-set="${setIndex}">
-          ${typeOptions.map(([label, flag]) => `<option value="${flag}" ${currentType === label ? "selected" : ""}>${label}</option>`).join("")}
+          ${typeOptions.map(([label, flag]) => `<option value="${flag}" ${currentFlag === flag ? "selected" : ""}>${label}</option>`).join("")}
         </select>
       </div>
       <div class="set-col-del">
         <button class="trash-btn" data-action="remove-set" data-item="${itemIndex}" data-set="${setIndex}">${iconSvg(navIcons.trash)}</button>
-      </div>
-      <div class="set-advanced-toggles">
-        <button class="toggle-pill ${set.isDropSet ? "active" : ""}" data-action="toggle-set-flag" data-item="${itemIndex}" data-set="${setIndex}" data-flag="isDropSet">Drop</button>
-        <button class="toggle-pill ${set.isPartial ? "active" : ""}" data-action="toggle-set-flag" data-item="${itemIndex}" data-set="${setIndex}" data-flag="isPartial">Partial</button>
-        <button class="toggle-pill ${set.isUnilateral ? "active" : ""}" data-action="toggle-set-flag" data-item="${itemIndex}" data-set="${setIndex}" data-flag="isUnilateral">Uni</button>
       </div>
     </div>
   `;
@@ -5060,6 +5050,50 @@ function emptyState(title, body) {
   return `<div class="empty"><strong>${title}</strong><span>${body}</span></div>`;
 }
 
+function workoutExercisePicker() {
+  const filtered = allExercises().filter((exercise) => `${exercise.name} ${exercise.category} ${exercise.primaryMuscles.join(" ")}`.toLowerCase().includes(exerciseQuery.toLowerCase()));
+  return `
+    <div class="workout-exercise-picker">
+      <label class="search"><span>Search</span><input value="${escapeAttr(exerciseQuery)}" data-input="exercise-query" placeholder="Bench, squat, back..." /></label>
+      <div class="exercise-list picker-list">
+        ${filtered.map((exercise) => `
+          <button class="exercise-row" data-action="select-exercise" data-id="${exercise.id}">
+            <div>
+              <strong>${exercise.name}</strong>
+              <span>${exercise.category} - ${exercise.equipment}</span>
+            </div>
+            <small>${exercise.custom ? "Custom" : exercise.primaryMuscles[0]}</small>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function workoutExerciseOptions(workout, index) {
+  const item = workout.exercises[index];
+  if (!item) return "";
+  const exercise = getExercise(item.exerciseId);
+  return `
+    <div class="workout-options-sheet">
+      <div class="sheet-exercise-info">
+        <strong>${exercise.name}</strong>
+        <span>${exercise.category} • ${exercise.equipment}</span>
+      </div>
+      <div class="sheet-action-list">
+        <button class="sheet-action-btn ${item.isSuperset ? "active" : ""}" data-action="toggle-superset" data-item="${index}">
+          ${iconSvg(navIcons.add)}
+          <span>${item.isSuperset ? "Remove Superset" : "Mark as Superset"}</span>
+        </button>
+        <button class="sheet-action-btn danger" data-action="remove-exercise" data-item="${index}">
+          ${iconSvg(navIcons.trash)}
+          <span>Remove Exercise</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 function renderPopup() {
   if (!activePopup) return "";
 
@@ -5082,6 +5116,12 @@ function renderPopup() {
   } else if (activePopup === 'recovery-checkin') {
     title = "Recovery Check-In";
     content = recoveryForm();
+  } else if (activePopup === 'add-exercise') {
+    title = "Add Exercise";
+    content = workoutExercisePicker();
+  } else if (activePopup === 'exercise-options') {
+    title = "Exercise Options";
+    content = workoutExerciseOptions(state.activeWorkout, state.activeWorkout?.currentIndex);
   }
 
   return `
@@ -5162,10 +5202,18 @@ function bindEvents(root) {
       if (action === "copy-previous-set") copyPreviousSet(Number(button.dataset.item), Number(button.dataset.set));
       if (action === "toggle-warmup") toggleWarmupSet(Number(button.dataset.item), Number(button.dataset.set));
       if (action === "swap-exercise") swapWorkoutExercise(Number(button.dataset.item), button.dataset.id);
-      if (action === "remove-exercise") removeExerciseFromWorkout(Number(button.dataset.item));
       if (action === "start-rest") startRest(90);
       if (action === "create-exercise") createCustomExercise();
-      if (action === "select-exercise") { selectedExerciseId = button.dataset.id; if (state.activeWorkout) addExerciseToWorkout(selectedExerciseId); else render(); }
+      if (action === "select-exercise") {
+        selectedExerciseId = button.dataset.id;
+        if (state.activeWorkout) {
+          addExerciseToWorkout(selectedExerciseId);
+          activePopup = null;
+          render();
+        } else {
+          render();
+        }
+      }
       if (action === "toggle-tracked-lift") toggleTrackedLift(button.dataset.id);
       if (action === "select-workout-exercise") { selectedExerciseId = button.dataset.id; render(); }
       if (action === "save-template") saveActiveAsTemplate();
@@ -5246,19 +5294,10 @@ function bindEvents(root) {
       if (action === "clear-barcode") { barcodeDraft = ""; barcodeLookupStatus = ""; mealDraft.barcode = ""; if (state.pendingMealEstimate) state.pendingMealEstimate.barcode = ""; saveState(); render(); }
       if (action === "clear-meal-draft") { state.pendingMealEstimate = null; mealDraft = { name: "", calories: "", protein: "", carbs: "", fats: "", timing: "", barcode: "", notes: "" }; mealPhotoData = ""; barcodeDraft = ""; barcodeLookupStatus = ""; saveState(); render(); }
       if (action === "toggle-set-flag") toggleSetFlag(Number(button.dataset.item), Number(button.dataset.set), button.dataset.flag);
-      if (action === "prev-exercise") {
-        if (state.activeWorkout && state.activeWorkout.currentIndex > 0) {
-          state.activeWorkout.currentIndex--;
-          saveState();
-          render();
-        }
-      }
-      if (action === "next-exercise") {
-        if (state.activeWorkout && state.activeWorkout.currentIndex < state.activeWorkout.exercises.length - 1) {
-          state.activeWorkout.currentIndex++;
-          saveState();
-          render();
-        }
+      if (action === "remove-exercise") {
+        removeExerciseFromWorkout(Number(button.dataset.item));
+        activePopup = null;
+        render();
       }
       if (action === "jump-to-exercise") {
         if (state.activeWorkout) {
@@ -5272,6 +5311,7 @@ function bindEvents(root) {
           const idx = Number(button.dataset.item);
           state.activeWorkout.exercises[idx].isSuperset = !state.activeWorkout.exercises[idx].isSuperset;
           saveState();
+          activePopup = null;
           render();
         }
       }
@@ -5303,11 +5343,11 @@ function bindEvents(root) {
     };
 
     const handleDragOver = (event, target) => {
-      if (target && target !== draggedItem) {
+      if (target && target !== draggedItem && target.dataset.index !== undefined) {
         const rect = target.getBoundingClientRect();
-        const midpoint = rect.top + rect.height / 2;
-        const clientY = event.clientY || (event.touches ? event.touches[0].clientY : 0);
-        if (clientY < midpoint) target.before(draggedItem);
+        const midpoint = rect.left + rect.width / 2;
+        const clientX = event.clientX || (event.touches ? event.touches[0].clientX : 0);
+        if (clientX < midpoint) target.before(draggedItem);
         else target.after(draggedItem);
       }
     };
@@ -5316,7 +5356,9 @@ function bindEvents(root) {
       if (!draggedItem) return;
       draggedItem.classList.remove("dragging");
       const currentEx = workout.exercises[workout.currentIndex];
-      const newOrder = Array.from(reorderList.querySelectorAll(".overview-item")).map((item) => Number(item.dataset.index));
+      const newOrder = Array.from(reorderList.querySelectorAll(".overview-item"))
+        .filter(item => item.dataset.index !== undefined)
+        .map((item) => Number(item.dataset.index));
       workout.exercises = newOrder.map((index) => workout.exercises[index]);
       workout.currentIndex = workout.exercises.indexOf(currentEx);
       draggedItem = null;
