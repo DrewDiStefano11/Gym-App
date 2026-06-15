@@ -169,6 +169,7 @@ let lastRenderedScreen = screen;
 let lastRenderedMode = state.activeMode;
 let selectedExerciseId = "bench-press";
 let editingWorkoutId = "";
+let viewingStarterTemplateId = "";
 let exerciseQuery = "";
 let newExerciseName = "";
 let activeSheet = "";
@@ -176,6 +177,22 @@ let whoopUploadStatus = "";
 let restRemaining = 0;
 let restTimerId = null;
 let nowTick = Date.now();
+let starterTemplates = [];
+let starterExercises = [];
+
+async function loadTrainingData() {
+  try {
+    const [libResp, tempResp] = await Promise.all([
+      fetch("./data/exercise-library.json"),
+      fetch("./data/workout-templates.json")
+    ]);
+    if (libResp.ok) starterExercises = await libResp.json();
+    if (tempResp.ok) starterTemplates = await tempResp.json();
+  } catch (e) {
+    console.warn("Starter training data not loaded:", e);
+  }
+  render();
+}
 
 function weekStartKey(date = new Date()) {
   const d = new Date(date);
@@ -659,7 +676,9 @@ function uid(prefix) {
 }
 
 function allExercises() {
-  return [...builtInExercises, ...state.customExercises.filter((exercise) => !exercise.deletedAt)];
+  const custom = state.customExercises.filter((exercise) => !exercise.deletedAt);
+  const starter = starterExercises.filter(se => !builtInExercises.some(be => be.id === se.id));
+  return [...builtInExercises, ...starter, ...custom];
 }
 
 function getExercise(id) {
@@ -4274,7 +4293,79 @@ function settingsScreen() {
 
 function templatesScreen() {
   const templates = activeTemplates();
-  return `<section class="screen"><header class="simple-top"><div><p class="eyebrow">Training</p><h1>Add Workouts</h1></div><button class="secondary" data-action="create-template">New blank</button></header>${templates.length ? templates.map(templateCard).join("") : `<section class="panel">${emptyState("No templates yet", "Create a blank template, then add lifts for Push, Pull, Legs, Upper, or Lower.")}<button class="primary full" data-action="create-template">Create Template</button></section>`}</section>`;
+  return `
+    <section class="screen">
+      <header class="simple-top">
+        <div><p class="eyebrow">Training</p><h1>Workouts</h1></div>
+        <button class="secondary" data-action="create-template">New blank</button>
+      </header>
+
+      ${templates.length ? `
+        <div class="section-heading"><h2>Your Templates</h2></div>
+        <div class="templates-grid">${templates.map(templateCard).join("")}</div>
+      ` : ""}
+
+      ${starterTemplates.length ? `
+        <div class="section-heading"><h2>Starter Templates</h2><p class="muted">Proven routines to get you started</p></div>
+        <div class="templates-grid">
+          ${starterTemplates.map(starterTemplateCard).join("")}
+        </div>
+      ` : templates.length ? "" : `
+        <section class="panel">
+          ${emptyState("No templates yet", "Create a blank template or wait for starter routines to load.")}
+          <button class="primary full" data-action="create-template">Create Template</button>
+        </section>
+      `}
+    </section>
+  `;
+}
+
+function starterTemplateDetail(template) {
+  if (!template) return emptyState("Not found", "Template data missing.");
+  return `
+    <div class="template-detail-view">
+      <div class="template-meta">
+        <p class="goal-text">Goal: ${template.goal}</p>
+        <p class="muted">Level: ${template.experienceLevel} | ${template.estimatedDurationMinutes}m | ${template.recommendedDaysPerWeek} days/wk</p>
+      </div>
+      <div class="template-exercise-list">
+        ${template.exercises.map(ex => {
+          const base = getExercise(ex.exerciseId);
+          return `
+            <div class="template-ex-row">
+              <div class="ex-info">
+                <strong>${base.name}</strong>
+                <span>${ex.sets} sets x ${ex.targetReps} reps • ${ex.restSeconds}s rest</span>
+                <small class="intensity">${ex.intensityNote}</small>
+              </div>
+              ${ex.optionalAlternativeExerciseIds.length ? `
+                <div class="ex-alternatives">
+                  <p class="mini-label">Alts: ${ex.optionalAlternativeExerciseIds.map(id => getExercise(id).name).join(", ")}</p>
+                </div>
+              ` : ""}
+            </div>
+          `;
+        }).join("")}
+      </div>
+      <button class="primary full" data-action="start-starter-template" data-id="${template.id}">Start workout</button>
+    </div>
+  `;
+}
+
+function starterTemplateCard(template) {
+  const exCount = template.exercises.length;
+  return `
+    <button class="panel template-card starter" data-action="view-starter-template" data-id="${template.id}">
+      <div class="template-header">
+        <strong>${template.name}</strong>
+        <div class="template-badges">
+          <span class="badge">${template.experienceLevel}</span>
+          <span class="badge goal">${template.goal}</span>
+        </div>
+      </div>
+      <p class="muted small">${template.estimatedDurationMinutes}m • ${template.recommendedDaysPerWeek} days/wk • ${exCount} lifts</p>
+    </button>
+  `;
 }
 
 function exercisesScreen() {
@@ -4906,6 +4997,10 @@ function renderPopup() {
   if (activePopup === 'log-meal') {
     title = "Log Meal";
     content = mealCaptureForm();
+  } else if (activePopup === 'starter-template') {
+    const template = starterTemplates.find(t => t.id === viewingStarterTemplateId);
+    title = template ? template.name : "Starter Template";
+    content = starterTemplateDetail(template);
   } else if (activePopup === 'add-weight') {
     title = "Add Weight";
     content = bodyweightForm(true);
@@ -4958,7 +5053,10 @@ function bindEvents(root) {
   root.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => {
       const action = button.dataset.action;
-      if (action === "start-workout") startWorkout();
+      if (action === "start-workout") {
+        if (state.activeWorkout && !confirm("Starting a new workout will replace your current active session. Continue?")) return;
+        startWorkout();
+      }
       if (action === "build-and-start") startWorkout(null, buildRecommendation());
       if (action === "build-recommendation") { buildRecommendation(); screen = "coach"; render(); }
       if (action === "rebuild-weekly-plan") rebuildWeeklyPlan();
@@ -4989,7 +5087,19 @@ function bindEvents(root) {
       if (action === "select-workout-exercise") { selectedExerciseId = button.dataset.id; render(); }
       if (action === "save-template") saveActiveAsTemplate();
       if (action === "create-template") createTemplateFromExercise();
-      if (action === "start-template") startWorkout(state.templates.find((template) => template.id === button.dataset.id));
+      if (action === "start-template") {
+        if (state.activeWorkout && !confirm("Starting a new workout will replace your current active session. Continue?")) return;
+        startWorkout(state.templates.find((template) => template.id === button.dataset.id));
+      }
+      if (action === "view-starter-template") { viewingStarterTemplateId = button.dataset.id; activePopup = "starter-template"; render(); }
+      if (action === "start-starter-template") {
+        if (state.activeWorkout && !confirm("Starting a new workout will replace your current active session. Continue?")) return;
+        const temp = starterTemplates.find(t => t.id === button.dataset.id);
+        if (temp) {
+          activePopup = null;
+          startWorkout(temp);
+        }
+      }
       if (action === "add-template-exercise") addTemplateExercise(button.dataset.id, root.querySelector(`[data-template-add="${button.dataset.id}"]`)?.value || selectedExerciseId);
       if (action === "remove-template-exercise") removeTemplateExercise(button.dataset.id, Number(button.dataset.index));
       if (action === "delete-template") deleteTemplate(button.dataset.id);
@@ -5331,4 +5441,4 @@ setInterval(() => {
 }, 30000);
 
 saveState();
-render();
+loadTrainingData();
