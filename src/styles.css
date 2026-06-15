@@ -3643,3 +3643,100 @@ button {
     border-radius: 34px;
   }
 }
+
+/* Starter Templates */
+.templates-grid {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.template-card.starter {
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.template-card.starter:active {
+  transform: scale(0.98);
+}
+
+.template-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.template-badges {
+  display: flex;
+  gap: 6px;
+}
+
+.badge {
+  font-size: 10px;
+  background: rgba(var(--accent-rgb), 0.15);
+  color: rgb(var(--accent-rgb));
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.badge.goal {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.template-detail-view {
+  padding: 16px 0;
+}
+
+.template-meta {
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.goal-text {
+  font-weight: 600;
+  color: rgb(var(--accent-rgb));
+  margin-bottom: 4px;
+}
+
+.template-exercise-list {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.template-ex-row {
+  display: grid;
+  gap: 4px;
+}
+
+.ex-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.ex-info strong {
+  font-size: 15px;
+}
+
+.ex-info span {
+  font-size: 13px;
+  color: #aaa;
+}
+
+.intensity {
+  color: rgb(var(--accent-rgb));
+  font-style: italic;
+}
+
+.ex-alternatives {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
