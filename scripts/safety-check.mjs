@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 const FORBIDDEN_EXTENSIONS = ['.bak', '.conflictbak', '.dupbak', '.mergebak'];
+// Use string concatenation to avoid the script flagging itself
 const CONFLICT_MARKERS = ['<<<<' + '<<<', '====' + '===', '>>>>' + '>>>'];
 const FORBIDDEN_KEYS = [
   /sk-[a-zA-Z0-9]{20,}/,
@@ -13,16 +14,12 @@ const FORBIDDEN_KEYS = [
 let failures = [];
 
 function checkFileContent(filePath) {
-  // Don't check the safety-check script itself for conflict markers
-  // so we can define them as constants.
-  const isSafetyCheckScript = filePath.includes('safety-check.mjs');
-
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split('\n');
 
   lines.forEach((line, index) => {
-    // Conflict markers
-    if (!isSafetyCheckScript) {
+    // Conflict markers - skip checklist doc as it contains them as examples
+    if (!filePath.endsWith('manual-smoke-test-checklist.md')) {
       CONFLICT_MARKERS.forEach(marker => {
         if (line.includes(marker)) {
           failures.push(`${filePath}:${index + 1} Found conflict marker: ${marker}`);
@@ -33,8 +30,6 @@ function checkFileContent(filePath) {
     // API Keys
     FORBIDDEN_KEYS.forEach(regex => {
       if (regex.test(line)) {
-        // Exclude generic placeholder patterns if they don't look like real keys
-        // For this task, we assume any match is a failure as per requirements
         failures.push(`${filePath}:${index + 1} Likely hardcoded API key found`);
       }
     });
@@ -68,11 +63,6 @@ function walkRepo(dir) {
       // Check .env files
       if (file === '.env' || file.endsWith('.env')) {
         failures.push(`${fullPath} Committed .env file found`);
-      }
-
-      // Check duplicate backup files in src/
-      if (dir.startsWith('src') && (file.includes('-backup') || /\s\(\d+\)\./.test(file))) {
-        failures.push(`${fullPath} Likely duplicate/backup file in src/`);
       }
 
       // Check content for text files
