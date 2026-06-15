@@ -37,10 +37,10 @@ const navIcons = {
 };
 
 const modeTabs = {
-  training: [["home", "Home", navIcons.home], ["workout-start", "Start", navIcons.start], ["templates", "Add", navIcons.add], ["training-cardio", "Cardio", navIcons.cardio], ["goals", "Goals", navIcons.goals], ["training-history", "History", navIcons.history]],
-  nutrition: [["home", "Home", navIcons.home], ["nutrition", "Macros", navIcons.macros], ["nutrition-weight", "Weight", navIcons.weight], ["nutrition-goals", "Goals", navIcons.goals], ["nutrition-history", "History", navIcons.history], ["nutrition-recommendations", "Tips", navIcons.stats]],
-  recovery: [["home", "Home", navIcons.home], ["recovery-sleep", "Sleep", navIcons.sleep], ["health", "Ready", navIcons.stats], ["recovery-stats", "Stats", navIcons.macros], ["recovery-goals", "Goals", navIcons.goals], ["recovery-history", "History", navIcons.history]],
-  progress: [["home", "Home", navIcons.home], ["progress", "Strength", navIcons.stats], ["progress-photos", "Photos", navIcons.photos], ["progress-prs", "PRs", navIcons.prs], ["progress-goals", "Goals", navIcons.goals], ["progress-history", "History", navIcons.history]]
+  training: [["home", "Home", navIcons.home], ["workout-start", "Log", navIcons.start], ["goals", "Goals", navIcons.goals]],
+  nutrition: [["home", "Home", navIcons.home], ["nutrition", "Log", navIcons.macros], ["nutrition-goals", "Goals", navIcons.goals]],
+  recovery: [["home", "Home", navIcons.home], ["health", "Log", navIcons.stats], ["recovery-goals", "Goals", navIcons.goals]],
+  progress: [["home", "Home", navIcons.home], ["progress", "Log", navIcons.stats], ["progress-goals", "Goals", navIcons.goals]]
 };
 
 const muscleGroups = ["Chest", "Back", "Quads", "Hamstrings", "Glutes", "Shoulders", "Triceps", "Biceps", "Lats", "Core"];
@@ -149,7 +149,6 @@ const seedState = {
 
 let aiChatDraft = "";
 let aiContextMode = "quick";
-let aiAssistantOpen = false;
 let mealDraft = { name: "", calories: "", protein: "", carbs: "", fats: "", timing: "", barcode: "", notes: "" };
 let mealPhotoData = "";
 let barcodeDraft = "";
@@ -162,7 +161,6 @@ const sectionHomeScreens = { training: "home", nutrition: "home", recovery: "hom
 
 let state = loadState();
 let screen = !state.onboardingComplete ? "onboarding" : state.activeWorkout ? "workout" : "home";
-let onboardingStep = 0;
 let activePopup = null; // null | 'log-meal' | 'add-weight' | 'add-supplement' | 'recovery-checkin'
 let workoutTimerInterval = null;
 let lastRenderedScreen = screen;
@@ -571,13 +569,6 @@ function createAutoBackup(reason = "Auto backup") {
     state.dataSafety = { ...state.dataSafety, backupCount: backups.length, backupError: "Automatic backup storage is full. Export JSON for a full copy." };
   }
   saveState();
-}
-
-function pruneAiMessages() {
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const before = state.aiMessages.length;
-  state.aiMessages = state.aiMessages.filter((message) => message.id === "ai-welcome" || (new Date(message.createdAt || 0).getTime() >= cutoff && !message.deletedAt));
-  return state.aiMessages.length !== before;
 }
 
 function trimAiHistory() {
@@ -2453,7 +2444,6 @@ function localCoachReply(question = "") {
 async function sendAiChat() {
   const prompt = aiChatDraft.trim();
   if (!prompt) return;
-  pruneAiMessages();
   const userMessage = normalizeAiMessage({ role: "user", content: prompt, contextMode: aiContextMode, section: state.activeMode, createdAt: new Date().toISOString() });
   state.aiMessages.push(userMessage);
   aiChatDraft = "";
@@ -2470,15 +2460,7 @@ async function sendAiChat() {
     state.aiMessages.push(normalizeAiMessage({ role: "assistant", content: payload.reply || localCoachReply(prompt), contextMode: aiContextMode, section: state.activeMode, relatedActions: payload.suggestions?.map((item) => item.id) || [] }));
     (payload.suggestions || []).forEach((suggestion) => state.aiSuggestions.unshift(normalizeAiSuggestion(suggestion)));
   } catch (error) {
-    const message = error.message || "AI unavailable";
-    const missingKey = message.includes("API_KEY") || message.toLowerCase().includes("not configured");
-    state.aiMessages.push(normalizeAiMessage({
-      role: "assistant",
-      content: missingKey ? "AI assistant is not configured yet." : localCoachReply(prompt),
-      contextMode: aiContextMode,
-      section: state.activeMode,
-      errorState: missingKey ? "Add GEMINI_API_KEY to Replit Secrets to enable AI." : message
-    }));
+    state.aiMessages.push(normalizeAiMessage({ role: "assistant", content: localCoachReply(prompt), contextMode: aiContextMode, section: state.activeMode, errorState: error.message || "AI unavailable" }));
   }
   saveState();
   render();
@@ -2811,11 +2793,12 @@ function iconSvg(path) {
 }
 
 function topAppActions() {
-  if (screen === "onboarding") return "";
+  if (screen === "onboarding" || screen === "workout") return "";
   return `
-    <section class="global-topbar ${screen === "workout" ? "workout-global" : ""}">
-      ${screen === "workout" ? `<span class="workout-global-spacer"></span>` : modeSwitch("compact")}
+    <section class="global-topbar">
+      ${modeSwitch("compact")}
       <div class="global-actions">
+        <button class="top-icon coach-icon" data-screen="${coachScreenForMode()}" aria-label="Open coach">${iconSvg(navIcons.coach)}<span>Coach</span></button>
         <button class="top-icon gear-button" data-screen="hub" aria-label="Open settings">${iconSvg(navIcons.hub)}</button>
       </div>
     </section>
@@ -2860,7 +2843,6 @@ function updateWorkoutTimer() {
 
 function render() {
   nowTick = Date.now();
-  pruneAiMessages();
   updateThemeColors();
   const app = document.querySelector("#app");
   const shouldResetScroll = screen !== lastRenderedScreen || state.activeMode !== lastRenderedMode;
@@ -2871,7 +2853,6 @@ function render() {
       ${renderedScreen}
     </main>
     ${bottomNav()}
-    ${floatingAssistant()}
     ${renderPopup()}
   `;
   bindEvents(app);
@@ -3401,127 +3382,14 @@ function saveRecoveryEstimateFromForm(form) {
   render();
 }
 
-function assistantMessages() {
-  return state.aiMessages.filter((message) => message.id !== "ai-welcome" && !message.deletedAt).slice(-16);
-}
-
-function assistantEmptyState() {
-  return `
-    <div class="assistant-empty">
-      <strong>FitCore Assistant</strong>
-      <span>Ask about training, nutrition, recovery, goals, history, Apple Health summaries, or settings.</span>
-    </div>
-  `;
-}
-
-function floatingAssistant() {
-  if (screen === "onboarding") return "";
-  const messages = assistantMessages();
-  const sheet = aiAssistantOpen ? `
-      <section class="assistant-backdrop" data-action="close-ai-assistant"></section>
-      <aside class="assistant-sheet mode-${state.activeMode || "training"}" role="dialog" aria-modal="true" aria-label="FitCore AI assistant">
-        <header>
-          <div><p class="eyebrow">FitCore AI</p><h2>Assistant</h2></div>
-          <button class="ghost" data-action="close-ai-assistant">Close</button>
-        </header>
-        <div class="segmented assistant-modes">
-          <button class="${aiContextMode === "quick" ? "active" : ""}" data-action="set-ai-context" data-mode="quick">Quick Answer</button>
-          <button class="${aiContextMode === "deep" ? "active" : ""}" data-action="set-ai-context" data-mode="deep">Detailed Coach</button>
-        </div>
-        <p class="privacy-note">Changes to workouts, meals, goals, templates, health data, or settings should be previewed and confirmed before saving.</p>
-        <div class="chat-log assistant-log">${messages.length ? messages.map(chatBubble).join("") : assistantEmptyState()}</div>
-        <div class="assistant-prompts">
-          <button data-action="assistant-prompt" data-prompt="What should I focus on today?">Today</button>
-          <button data-action="assistant-prompt" data-prompt="Summarize my progress this week.">Recap</button>
-          <button data-action="assistant-prompt" data-prompt="What should I log next?">Log next</button>
-        </div>
-        <div class="chat-input assistant-input"><input data-input="ai-chat" value="${escapeAttr(aiChatDraft)}" placeholder="Ask FitCore..." /><button class="primary" data-action="send-ai-chat">Send</button></div>
-      </aside>
-    ` : "";
-  return `
-    <button class="floating-ai ${aiAssistantOpen ? "active" : ""}" data-action="toggle-ai-assistant" aria-label="${aiAssistantOpen ? "Close AI assistant" : "Open AI assistant"}">${iconSvg(navIcons.coach)}<span>AI</span></button>
-    ${sheet}
-  `;
-}
-
 function onboardingScreen() {
-  const steps = [
-    { title: "Welcome", body: "Let's personalize your experience. A few questions will help Coach tailor your training and nutrition targets." },
-    { title: "Your Goal", body: "What are you primarily focused on right now?", content: `
-        <div class="start-grid">
-          <button class="secondary ${state.profile.goal === "Strength" ? "active" : ""}" data-action="onboarding-select" data-key="goal" data-value="Strength">Strength & Muscle</button>
-          <button class="secondary ${state.profile.goal === "Powerlifting" ? "active" : ""}" data-action="onboarding-select" data-key="goal" data-value="Powerlifting">Powerlifting</button>
-          <button class="secondary ${state.profile.goal === "Bodybuilding" ? "active" : ""}" data-action="onboarding-select" data-key="goal" data-value="Bodybuilding">Bodybuilding</button>
-          <button class="secondary ${state.profile.goal === "General Fitness" ? "active" : ""}" data-action="onboarding-select" data-key="goal" data-value="General Fitness">General Fitness</button>
-        </div>
-      ` },
-    { title: "Experience", body: "How long have you been training seriously?", content: `
-        <div class="start-grid">
-          <button class="secondary ${state.profile.experience === "beginner" ? "active" : ""}" data-action="onboarding-select" data-key="experience" data-value="beginner">Beginner (< 1 year)</button>
-          <button class="secondary ${state.profile.experience === "intermediate" ? "active" : ""}" data-action="onboarding-select" data-key="experience" data-value="intermediate">Intermediate (1-3 years)</button>
-          <button class="secondary ${state.profile.experience === "advanced" ? "active" : ""}" data-action="onboarding-select" data-key="experience" data-value="advanced">Advanced (3+ years)</button>
-        </div>
-      ` },
-    { title: "Schedule", body: "How many days per week can you realistically train?", content: `
-        <div class="form-grid">
-          <label>Days per week<input type="range" min="1" max="7" value="${state.profile.trainingDaysPerWeek}" data-onboarding-input="trainingDaysPerWeek"><strong>${state.profile.trainingDaysPerWeek} days</strong></label>
-        </div>
-      ` },
-    { title: "Split", body: "What training split do you prefer?", content: `
-        <div class="start-grid">
-          <button class="secondary ${state.profile.preferredSplit === "Push Pull Legs Upper Lower" ? "active" : ""}" data-action="onboarding-select" data-key="preferredSplit" data-value="Push Pull Legs Upper Lower">PPL + UL</button>
-          <button class="secondary ${state.profile.preferredSplit === "Push Pull Legs" ? "active" : ""}" data-action="onboarding-select" data-key="preferredSplit" data-value="Push Pull Legs">PPL</button>
-          <button class="secondary ${state.profile.preferredSplit === "Upper Lower" ? "active" : ""}" data-action="onboarding-select" data-key="preferredSplit" data-value="Upper Lower">Upper Lower</button>
-          <button class="secondary ${state.profile.preferredSplit === "Full Body" ? "active" : ""}" data-action="onboarding-select" data-key="preferredSplit" data-value="Full Body">Full Body</button>
-        </div>
-      ` },
-    { title: "Equipment", body: "What do you have access to?", content: `
-        <div class="check-row">
-          ${["Barbell", "Dumbbell", "Machine", "Bodyweight", "Cable"].map(eq => `
-            <label><input type="checkbox" data-onboarding-equipment value="${eq}" ${state.profile.preferredEquipment.includes(eq) ? "checked" : ""}> ${eq}</label>
-          `).join("")}
-        </div>
-      ` },
-    { title: "Bodyweight", body: "Help us estimate your starting nutrition targets.", content: `
-        <div class="form-grid">
-          <label>Current weight (lb)<input type="number" value="${state.nutritionSettings.bodyweight}" data-onboarding-nutrition-input="bodyweight"></label>
-          <label>Target weight (lb)<input type="number" value="${state.nutritionSettings.targetBodyweight}" data-onboarding-nutrition-input="targetBodyweight"></label>
-        </div>
-      ` },
-    { title: "Summary", body: "Ready to start? You can always change these in the Hub later.", content: `
-        <div class="leader-row"><div><strong>Goal</strong><span>${state.profile.goal}</span></div></div>
-        <div class="leader-row"><div><strong>Experience</strong><span>${capitalize(state.profile.experience)}</span></div></div>
-        <div class="leader-row"><div><strong>Frequency</strong><span>${state.profile.trainingDaysPerWeek} days/week</span></div></div>
-        <div class="leader-row"><div><strong>Split</strong><span>${state.profile.preferredSplit}</span></div></div>
-        <div class="leader-row"><div><strong>Weight</strong><span>${state.nutritionSettings.bodyweight} lb</span></div></div>
-      ` }
-  ];
-
-  const step = steps[onboardingStep];
-  const isLast = onboardingStep === steps.length - 1;
-
   return `
-    <section class="screen onboarding-screen">
+    <section class="screen">
       <header class="home-hero">
-        <div>
-          <p class="eyebrow">Step ${onboardingStep + 1} of ${steps.length}</p>
-          <h1>${step.title}</h1>
-          <p class="muted">${step.body}</p>
-        </div>
+        <div><p class="eyebrow">Setup</p><h1>Make it yours.</h1><p class="muted">A short assessment helps Coach make useful calls from day one.</p></div>
       </header>
-
-      <section class="panel">
-        ${step.content || ""}
-        <div class="onboarding-actions">
-          ${onboardingStep > 0 ? `<button class="secondary" data-action="onboarding-back">Back</button>` : "<span></span>"}
-          ${isLast ? `<button class="primary" data-action="complete-onboarding">Finish</button>` : `<button class="primary" data-action="onboarding-next">Next</button>`}
-        </div>
-        ${onboardingStep === 0 ? `<button class="ghost full" data-action="skip-onboarding">Skip to App</button>` : ""}
-      </section>
-
-      <div class="onboarding-progress">
-        ${steps.map((_, i) => `<i class="${i === onboardingStep ? "active" : i < onboardingStep ? "done" : ""}"></i>`).join("")}
-      </div>
+      <section class="panel">${profileForm()}<div class="backup-actions"><button class="secondary" data-action="seed-health">Add samples</button><button class="secondary" data-action="complete-onboarding">Finish setup</button><button class="secondary" data-action="skip-onboarding">Skip</button></div></section>
+      <section class="panel"><div class="section-heading"><h2>Main lift goals</h2><button class="ghost" data-action="add-goal">Add</button></div>${activeLiftGoals().map(goalRow).join("")}</section>
     </section>
   `;
 }
@@ -5021,16 +4889,6 @@ function bindEvents(root) {
       if (action === "complete-onboarding") completeOnboarding();
       if (action === "skip-onboarding") completeOnboarding(false);
       if (action === "set-ai-context") { aiContextMode = button.dataset.mode || "quick"; render(); }
-      if (action === "toggle-ai-assistant") { aiAssistantOpen = !aiAssistantOpen; render(); }
-      if (action === "close-ai-assistant") { aiAssistantOpen = false; render(); }
-      if (action === "assistant-prompt") { aiChatDraft = button.dataset.prompt || ""; void sendAiChat(); }
-      if (action === "onboarding-next") { onboardingStep += 1; render(); }
-      if (action === "onboarding-back") { onboardingStep -= 1; render(); }
-      if (action === "onboarding-select") {
-        state.profile[button.dataset.key] = button.dataset.value;
-        onboardingStep += 1;
-        render();
-      }
       if (action === "set-mode") { state.activeMode = button.dataset.mode || "training"; screen = "home"; activeSheet = ""; activePopup = null; saveState(); render(); }
       if (action === "open-popup") { activePopup = button.dataset.popup; render(); }
       if (action === "close-popup") { activePopup = null; render(); }
@@ -5118,22 +4976,6 @@ function bindEvents(root) {
     input.addEventListener("input", () => updateSet(Number(input.dataset.item), Number(input.dataset.set), input.dataset.setInput, input.value));
   });
 
-  root.querySelectorAll("[data-onboarding-input]").forEach(input => {
-    input.addEventListener("input", () => {
-      state.profile[input.dataset.onboardingInput] = input.value;
-      render();
-    });
-  });
-
-  root.querySelectorAll("[data-onboarding-equipment]").forEach(input => {
-    input.addEventListener("change", () => {
-      const current = new Set(state.profile.preferredEquipment);
-      if (input.checked) current.add(input.value);
-      else current.delete(input.value);
-      state.profile.preferredEquipment = Array.from(current);
-    });
-  });
-
   const queryInput = root.querySelector("[data-input='exercise-query']");
   if (queryInput) queryInput.addEventListener("input", (event) => {
     exerciseQuery = event.target.value;
@@ -5143,13 +4985,6 @@ function bindEvents(root) {
   const newExerciseInput = root.querySelector("[data-input='new-exercise']");
   if (newExerciseInput) newExerciseInput.addEventListener("input", (event) => {
     newExerciseName = event.target.value;
-  });
-
-  root.querySelectorAll("[data-onboarding-nutrition-input]").forEach(input => {
-    input.addEventListener("input", () => {
-      state.nutritionSettings[input.dataset.onboardingNutritionInput] = Number(input.value);
-      render();
-    });
   });
 
   const aiInput = root.querySelector("[data-input='ai-chat']");
