@@ -44,3 +44,6 @@ jobs:
           else
             echo "src/fitcore-bootstrap.js not found, skipping check."
           fi
+
+      - name: Run FitCore Safety Check
+        run: node scripts/safety-check.mjs
