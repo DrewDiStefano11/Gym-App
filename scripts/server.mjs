@@ -128,11 +128,47 @@ async function handleAiChat(req, res) {
   try {
     rateLimit(req, "chat", chatLimit);
     const { message, contextMode, context } = await readJson(req);
-    const instruction = "You are Apex Signal's strength and weight-gain coach. Keep replies under 120 words by default. Use the provided app summary. Be conservative, avoid medical claims, and say when data is missing.";
+    const clientKey = req.headers["x-gemini-key"];
+    const activeKey = clientKey || process.env.GEMINI_API_KEY;
+
+    if (!activeKey) {
+      const error = new Error("GEMINI_API_KEY is not configured.");
+      error.status = 503;
+      throw error;
+    }
+
+    const instruction = `You are Apex Signal's strength and weight-gain coach. Keep replies under 120 words.
+Use the provided app context. Be conservative, avoid medical claims.
+If contextMode is 'log', interpret the message as a potential app log.
+Available actions to suggest as JSON objects in 'suggestions' array:
+- { "type": "workout_set", "title": "Log Set", "payload": { "exerciseName": "Bench Press", "weight": 185, "reps": 8 } }
+- { "type": "food", "title": "Log Food", "payload": { "name": "Chicken and rice", "calories": 650, "protein": 45, "carbs": 70, "fats": 18 } }
+- { "type": "bodyweight", "title": "Log Weight", "payload": { "weight": 184.6 } }
+- { "type": "cardio", "title": "Log Cardio", "payload": { "type": "Basketball", "minutes": 45 } }
+- { "type": "reminder", "title": "Create Reminder", "payload": { "title": "Weigh in", "dateTime": "2024-05-20T21:00" } }
+- { "type": "start_workout", "title": "Start Workout", "payload": { "name": "Upper Body" } }
+
+Return response as JSON: { "reply": "...", "suggestions": [...], "used": ["..."] }`;
+
     const prompt = `Question: ${message}\nContext mode: ${contextMode}\nApp context JSON: ${JSON.stringify(context)}`;
     let text = "";
     if (provider === "gemini") {
-      text = await callGemini({ instruction, text: prompt });
+      const parts = [{ text: `${instruction}\n\n${prompt}` }];
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${activeKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts }],
+          generationConfig: { maxOutputTokens: 1000, temperature: 0.2, response_mime_type: "application/json" }
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(payload.error?.message || "Gemini request failed.");
+        error.status = response.status;
+        throw error;
+      }
+      text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "{}";
     } else {
       const response = await callOpenAi({
         model: openAiModel,
@@ -151,11 +187,39 @@ async function handleMealEstimate(req, res) {
   try {
     rateLimit(req, "meal", mealLimit);
     const { imageDataUrl, targets } = await readJson(req);
+    const clientKey = req.headers["x-gemini-key"];
+    const activeKey = clientKey || process.env.GEMINI_API_KEY;
+
+    if (!activeKey) {
+      const error = new Error("GEMINI_API_KEY is not configured.");
+      error.status = 503;
+      throw error;
+    }
+
     const instruction = "Estimate nutrition from the food photo. Return only compact JSON with keys: name, calories, protein, carbs, fats, confidence, notes. Be conservative and mention uncertainty in notes.";
     const prompt = `Estimate this meal for a strength athlete trying to gain weight. Targets: ${JSON.stringify(targets)}`;
     let text = "";
     if (provider === "gemini") {
-      text = await callGemini({ instruction, text: prompt, imageDataUrl });
+      const parts = [{ text: `${instruction}\n\n${prompt}` }];
+      if (imageDataUrl) {
+        const match = imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
+        if (match) parts.push({ inline_data: { mime_type: match[1], data: match[2] } });
+      }
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${activeKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts }],
+          generationConfig: { maxOutputTokens: 1000, temperature: 0.2, response_mime_type: "application/json" }
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(payload.error?.message || "Gemini request failed.");
+        error.status = response.status;
+        throw error;
+      }
+      text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "{}";
     } else {
       const response = await callOpenAi({
         model: openAiModel,
@@ -170,8 +234,8 @@ async function handleMealEstimate(req, res) {
       });
       text = response.output_text || response.output?.flatMap((item) => item.content || []).map((item) => item.text || "").join("\n") || "{}";
     }
-    const meal = extractJson(text, {});
-    sendJson(res, 200, { meal });
+    const result = extractJson(text, { reply: text });
+    sendJson(res, 200, result);
   } catch (error) {
     sendJson(res, error.status || 500, { error: error.message || "Meal estimate unavailable." });
   }
@@ -181,12 +245,39 @@ async function handleRecoveryScreenshot(req, res) {
   try {
     rateLimit(req, "meal", mealLimit);
     const { imageDataUrl } = await readJson(req);
+    const clientKey = req.headers["x-gemini-key"];
+    const activeKey = clientKey || process.env.GEMINI_API_KEY;
+
+    if (!activeKey) {
+      const error = new Error("GEMINI_API_KEY is not configured.");
+      error.status = 503;
+      throw error;
+    }
+
     if (!imageDataUrl) return sendJson(res, 400, { error: "Image is required." });
     const instruction = "Extract visible WHOOP or recovery screenshot data. Return only compact JSON with keys: metrics and notes. metrics may include sleepHours, sleepScore, hrv, restingHeartRate, recoveryScore, strain. Use numbers only. Omit uncertain fields. Never invent values.";
     const prompt = "Read this recovery screenshot/photo. Extract only clearly visible recovery and sleep values. If a value is not visible, omit it.";
     let text = "";
     if (provider === "gemini") {
-      text = await callGemini({ instruction, text: prompt, imageDataUrl });
+      const parts = [{ text: `${instruction}\n\n${prompt}` }];
+      const match = imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
+      if (match) parts.push({ inline_data: { mime_type: match[1], data: match[2] } });
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${activeKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts }],
+          generationConfig: { maxOutputTokens: 1000, temperature: 0.2, response_mime_type: "application/json" }
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(payload.error?.message || "Gemini request failed.");
+        error.status = response.status;
+        throw error;
+      }
+      text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "{}";
     } else {
       const response = await callOpenAi({
         model: openAiModel,

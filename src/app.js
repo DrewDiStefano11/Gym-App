@@ -141,15 +141,28 @@ const seedState = {
   supplementEntries: [],
   cardioEntries: [],
   progressPhotos: [],
+  aiSettings: {
+    geminiApiKey: "",
+    showApiKey: false,
+    permissions: {
+      suggestActions: true,
+      prepareLogs: true,
+      requireConfirmation: true
+    }
+  },
   aiMessages: [],
   aiSuggestions: [],
+  aiReminders: [],
+  geminiStatus: "not_configured",
   workouts: [],
   activeWorkout: null
 };
 
 let aiChatDraft = "";
-let aiContextMode = "quick";
+let aiContextMode = "quick"; // quick, deep, log
 let aiAssistantOpen = false;
+let aiAssistantMaximized = false;
+let aiIsListening = false;
 let mealDraft = { name: "", calories: "", protein: "", carbs: "", fats: "", timing: "", barcode: "", notes: "" };
 let mealPhotoData = "";
 let barcodeDraft = "";
@@ -179,6 +192,56 @@ let restTimerId = null;
 let nowTick = Date.now();
 let starterTemplates = [];
 let starterExercises = [];
+let speechRecognition = null;
+
+if (typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  speechRecognition = new SpeechRecognition();
+  speechRecognition.continuous = true;
+  speechRecognition.interimResults = true;
+  speechRecognition.lang = "en-US";
+
+  speechRecognition.onresult = (event) => {
+    let finalTranscript = "";
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript;
+      }
+    }
+    if (finalTranscript) {
+      aiChatDraft = (aiChatDraft + " " + finalTranscript).trim();
+      render();
+    }
+  };
+
+  speechRecognition.onend = () => {
+    aiIsListening = false;
+    render();
+  };
+
+  speechRecognition.onerror = () => {
+    aiIsListening = false;
+    render();
+  };
+}
+
+function toggleVoiceInput() {
+  if (!speechRecognition) {
+    alert("Speech recognition is not supported in this browser.");
+    return;
+  }
+  if (aiIsListening) {
+    speechRecognition.stop();
+  } else {
+    try {
+      speechRecognition.start();
+      aiIsListening = true;
+    } catch (e) {
+      console.warn("Speech recognition error:", e);
+    }
+  }
+  render();
+}
 
 async function loadTrainingData() {
   try {
@@ -260,6 +323,10 @@ function normalizeState(input = {}) {
   merged.progressPhotos = (input.progressPhotos || []).map(normalizeProgressPhoto);
   merged.aiMessages = (input.aiMessages || defaultAiMessages()).map(normalizeAiMessage);
   merged.aiSuggestions = (input.aiSuggestions || []).map(normalizeAiSuggestion);
+  merged.aiSettings = { ...seedState.aiSettings, ...(input.aiSettings || {}) };
+  merged.aiSettings.permissions = { ...seedState.aiSettings.permissions, ...(input.aiSettings?.permissions || {}) };
+  merged.aiReminders = (input.aiReminders || []).map(normalizeAiReminder);
+  merged.geminiStatus = input.geminiStatus || seedState.geminiStatus;
   merged.pendingMealEstimate = input.pendingMealEstimate || null;
   return merged;
 }
@@ -418,6 +485,7 @@ function normalizeAiMessage(message) {
     contextMode: message.contextMode || "quick",
     section: message.section || state?.activeMode || "training",
     relatedActions: message.relatedActions || [],
+    used: message.used || [],
     errorState: message.errorState || null,
     createdAt: message.createdAt || new Date().toISOString(),
     deletedAt: message.deletedAt || null
@@ -427,14 +495,27 @@ function normalizeAiMessage(message) {
 function normalizeAiSuggestion(suggestion) {
   return {
     id: suggestion.id || uid("suggestion"),
-    type: suggestion.type || "note",
+    type: suggestion.type || "note", // note, workout_set, start_workout, food, bodyweight, recovery, cardio, reminder, progress_note
     title: suggestion.title || "AI suggestion",
     reasoning: suggestion.reasoning || "",
     payload: suggestion.payload || {},
-    status: suggestion.status || "pending",
+    status: suggestion.status || "pending", // pending, applied, dismissed, canceled
     createdAt: suggestion.createdAt || new Date().toISOString(),
     appliedAt: suggestion.appliedAt || null,
     deletedAt: suggestion.deletedAt || null
+  };
+}
+
+function normalizeAiReminder(reminder) {
+  return {
+    id: reminder.id || uid("reminder"),
+    title: reminder.title || "Reminder",
+    dateTime: reminder.dateTime || new Date().toISOString(),
+    repeat: reminder.repeat || "none", // none, daily, weekly
+    enabled: reminder.enabled ?? true,
+    notes: reminder.notes || "",
+    createdAt: reminder.createdAt || new Date().toISOString(),
+    deletedAt: reminder.deletedAt || null
   };
 }
 
@@ -596,6 +677,7 @@ function pruneAiMessages() {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   const before = state.aiMessages.length;
   state.aiMessages = state.aiMessages.filter((message) => message.id === "ai-welcome" || (new Date(message.createdAt || 0).getTime() >= cutoff && !message.deletedAt));
+  state.aiSuggestions = state.aiSuggestions.filter((s) => s.status === "applied" || (new Date(s.createdAt || 0).getTime() >= cutoff && !s.deletedAt));
   return state.aiMessages.length !== before;
 }
 
@@ -2030,6 +2112,39 @@ function saveProfileFromForm(form) {
   render();
 }
 
+async function testGeminiConnection() {
+  if (!state.aiSettings.geminiApiKey) return;
+  state.geminiStatus = "testing";
+  render();
+  try {
+    const response = await fetch("/api/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-gemini-key": state.aiSettings.geminiApiKey },
+      body: JSON.stringify({ message: "ping", contextMode: "quick", context: { ping: true } })
+    });
+    if (!response.ok) throw new Error("Connection failed");
+    state.geminiStatus = "connected";
+  } catch {
+    state.geminiStatus = "error";
+  }
+  saveState();
+  render();
+}
+
+function saveGeminiSettingsFromForm(form) {
+  state.aiSettings.geminiApiKey = form.geminiApiKey.value || "";
+  state.aiSettings.permissions.suggestActions = form.suggestActions.checked;
+  state.aiSettings.permissions.prepareLogs = form.prepareLogs.checked;
+  if (!state.aiSettings.geminiApiKey) {
+    state.geminiStatus = "not_configured";
+  } else if (state.geminiStatus === "not_configured") {
+    state.geminiStatus = "testing";
+    void testGeminiConnection();
+  }
+  saveState();
+  render();
+}
+
 function saveAppSettingsFromForm(form) {
   state.settings = {
     ...state.settings,
@@ -2071,12 +2186,16 @@ function exportJson() {
 }
 
 function structuredExportState() {
-  return {
+  const exported = {
     ...state,
     progressPhotos: state.progressPhotos.map((photo) => ({ ...photo, imageDataUrl: photo.imageDataUrl ? `local-object://progress-photos/${photo.id}.jpg` : "" })),
     mealEntries: state.mealEntries.map((meal) => ({ ...meal, photoThumbnail: meal.photoThumbnail ? `local-object://meal-thumbnails/${meal.id}.jpg` : "" })),
     pendingMealEstimate: null
   };
+  if (exported.aiSettings) {
+    exported.aiSettings = { ...exported.aiSettings, geminiApiKey: "" };
+  }
+  return exported;
 }
 
 function exportStructuredJson() {
@@ -2503,6 +2622,25 @@ function dataQualitySummary() {
   return missing;
 }
 
+function localAiParser(prompt) {
+  const text = prompt.toLowerCase();
+  if (text.includes("log weight") || text.includes("weighed")) {
+    const match = text.match(/(\d+\.?\d*)/);
+    if (match) return { type: "bodyweight", title: "Log Weight", payload: { weight: match[1] } };
+  }
+  if (text.includes("ate") || text.includes("log food") || text.includes("had a")) {
+    return { type: "food", title: "Log Food", payload: { name: prompt.replace(/log food|i ate|i had a/gi, "").trim() || "Meal", calories: 500, protein: 30, carbs: 50, fats: 15 } };
+  }
+  if (text.includes("log") && (text.includes("for") || text.includes("sets"))) {
+    const match = text.match(/log\s+([\w\s]+?)\s+(\d+)\s+for\s+(\d+)/i);
+    if (match) return { type: "workout_set", title: "Log Set", payload: { exerciseName: capitalize(match[1].trim()), weight: match[2], reps: match[3] } };
+  }
+  if (text.includes("played") || text.includes("minutes") || text.includes("ran")) {
+    return { type: "cardio", title: "Log Cardio", payload: { type: "Activity", minutes: 30 } };
+  }
+  return null;
+}
+
 function localCoachReply(question = "") {
   const goal = activeLiftGoals().map(evaluatedGoal)[0];
   const totals = nutritionTotals();
@@ -2525,24 +2663,48 @@ async function sendAiChat() {
   saveState();
   render();
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (state.aiSettings.geminiApiKey) {
+      headers["x-gemini-key"] = state.aiSettings.geminiApiKey;
+    }
     const response = await fetch("/api/ai/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ message: prompt, contextMode: aiContextMode, context: aiContext(aiContextMode) })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "AI unavailable");
-    state.aiMessages.push(normalizeAiMessage({ role: "assistant", content: payload.reply || localCoachReply(prompt), contextMode: aiContextMode, section: state.activeMode, relatedActions: payload.suggestions?.map((item) => item.id) || [] }));
-    (payload.suggestions || []).forEach((suggestion) => state.aiSuggestions.unshift(normalizeAiSuggestion(suggestion)));
+    const assistantMessage = normalizeAiMessage({
+      role: "assistant",
+      content: payload.reply || localCoachReply(prompt),
+      contextMode: aiContextMode,
+      section: state.activeMode,
+      used: payload.used || [],
+      relatedActions: payload.suggestions?.map((item) => {
+        const s = normalizeAiSuggestion(item);
+        state.aiSuggestions.unshift(s);
+        return s.id;
+      }) || []
+    });
+    state.aiMessages.push(assistantMessage);
   } catch (error) {
     const message = error.message || "AI unavailable";
     const missingKey = message.includes("API_KEY") || message.toLowerCase().includes("not configured");
+    const localAction = localAiParser(prompt);
+    const relatedActions = [];
+    if (localAction) {
+      const s = normalizeAiSuggestion(localAction);
+      state.aiSuggestions.unshift(s);
+      relatedActions.push(s.id);
+    }
     state.aiMessages.push(normalizeAiMessage({
       role: "assistant",
-      content: missingKey ? "AI assistant is not configured yet." : localCoachReply(prompt),
+      content: missingKey ? (localAction ? "I've prepared a local log for you. Gemini is not configured for full coaching yet." : "AI assistant is not configured yet.") : localCoachReply(prompt),
       contextMode: aiContextMode,
       section: state.activeMode,
-      errorState: missingKey ? "Add GEMINI_API_KEY to Replit Secrets to enable AI." : message
+      relatedActions,
+      used: ["local rules"],
+      errorState: missingKey ? "Add GEMINI_API_KEY in Hub to enable full AI." : message
     }));
   }
   saveState();
@@ -2553,18 +2715,66 @@ function applyAiSuggestion(id) {
   const suggestion = state.aiSuggestions.find((item) => item.id === id);
   if (!suggestion || suggestion.status === "applied") return;
   pushUndo(`Applied ${suggestion.title}`);
+
+  const p = suggestion.payload;
   if (suggestion.type === "nutrition_targets") {
-    state.nutritionSettings = { ...state.nutritionSettings, ...suggestion.payload, updatedAt: new Date().toISOString() };
+    state.nutritionSettings = { ...state.nutritionSettings, ...p, updatedAt: new Date().toISOString() };
+  } else if (suggestion.type === "profile") {
+    state.profile = { ...state.profile, ...p, updatedAt: new Date().toISOString() };
+  } else if (suggestion.type === "plan_focus" && Array.isArray(p.focusAreas)) {
+    state.weeklyPlan.focusAreas = p.focusAreas;
+  } else if (suggestion.type === "workout_set") {
+    const exerciseId = allExercises().find(e => e.name.toLowerCase() === (p.exerciseName || "").toLowerCase())?.id || "bench-press";
+    if (state.activeWorkout) {
+      const existing = state.activeWorkout.exercises.find(e => e.exerciseId === exerciseId);
+      if (existing) {
+        existing.sets.push(newSet(p.weight, p.reps || 10, exerciseId, existing));
+        existing.sets.at(-1).completed = true;
+        existing.sets.at(-1).source = "ai";
+      } else {
+        addExerciseToWorkout(exerciseId);
+        const added = state.activeWorkout.exercises.at(-1);
+        added.sets = [newSet(p.weight, p.reps || 10, exerciseId, added)];
+        added.sets[0].completed = true;
+        added.sets[0].source = "ai";
+      }
+    } else {
+      // Create a workout if none exists? For now, we mainly support logging sets into active workouts.
+      // Or we can start a new one.
+      startWorkout();
+      const added = state.activeWorkout.exercises[0];
+      added.exerciseId = exerciseId;
+      added.sets = [newSet(p.weight, p.reps || 10, exerciseId, added)];
+      added.sets[0].completed = true;
+      added.sets[0].source = "ai";
+    }
+  } else if (suggestion.type === "food") {
+    state.mealEntries.unshift(normalizeMealEntry({ ...p, date: todayKey(), source: "ai" }));
+  } else if (suggestion.type === "bodyweight") {
+    state.bodyweightEntries.unshift(normalizeBodyweightEntry({ weight: p.weight, date: todayKey(), source: "ai" }));
+    state.nutritionSettings.bodyweight = Number(p.weight);
+  } else if (suggestion.type === "cardio") {
+    state.cardioEntries.unshift(normalizeCardioEntry({ ...p, date: todayKey() }));
+  } else if (suggestion.type === "reminder") {
+    state.aiReminders.unshift(normalizeAiReminder(p));
+  } else if (suggestion.type === "start_workout") {
+    if (!state.activeWorkout) {
+      startWorkout();
+      if (p.name) state.activeWorkout.name = p.name;
+    }
   }
-  if (suggestion.type === "profile") {
-    state.profile = { ...state.profile, ...suggestion.payload, updatedAt: new Date().toISOString() };
-  }
-  if (suggestion.type === "plan_focus" && Array.isArray(suggestion.payload.focusAreas)) {
-    state.weeklyPlan.focusAreas = suggestion.payload.focusAreas;
-  }
+
   suggestion.status = "applied";
   suggestion.appliedAt = new Date().toISOString();
   createAutoBackup(`Applied ${suggestion.title}`);
+  render();
+}
+
+function cancelAiSuggestion(id) {
+  const suggestion = state.aiSuggestions.find((item) => item.id === id);
+  if (!suggestion) return;
+  suggestion.status = "canceled";
+  saveState();
   render();
 }
 
@@ -2589,28 +2799,42 @@ async function estimateMealFromPhoto(file) {
   saveState();
   render();
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (state.aiSettings.geminiApiKey) {
+      headers["x-gemini-key"] = state.aiSettings.geminiApiKey;
+    }
     const response = await fetch("/api/ai/meal-estimate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ imageDataUrl: thumbnail, goal: "muscle gain", targets: state.nutritionSettings })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "AI meal estimate unavailable");
     const estimate = payload.meal || {};
-    mealDraft = {
-      name: estimate.name || "Estimated meal",
-      calories: estimate.calories || "",
-      protein: estimate.protein || "",
-      carbs: estimate.carbs || "",
-      fats: estimate.fats || "",
-      timing: mealDraft.timing || "",
-      barcode: mealDraft.barcode || "",
-      notes: estimate.notes || "AI estimate. Review before saving."
-    };
-    state.pendingMealEstimate = { ...mealDraft, photoThumbnail: thumbnail, confidence: estimate.confidence || "AI estimate", source: "ai", createdAt: new Date().toISOString() };
+
+    const s = normalizeAiSuggestion({
+      type: "food",
+      title: "Photo Meal Estimate",
+      reasoning: estimate.notes || "Estimated from photo.",
+      payload: {
+        name: estimate.name || "Estimated meal",
+        calories: estimate.calories || 0,
+        protein: estimate.protein || 0,
+        carbs: estimate.carbs || 0,
+        fats: estimate.fats || 0,
+        notes: estimate.notes || ""
+      }
+    });
+    state.aiSuggestions.unshift(s);
+    state.aiMessages.push(normalizeAiMessage({
+      role: "assistant",
+      content: `I've estimated your meal from the photo. Please review and confirm the macros.`,
+      relatedActions: [s.id]
+    }));
+
+    state.pendingMealEstimate = null;
   } catch (error) {
-    mealDraft = { name: "Photo meal", calories: "", protein: "", carbs: "", fats: "", timing: mealDraft.timing || "", barcode: mealDraft.barcode || "", notes: "AI unavailable. Enter macros manually." };
-    state.pendingMealEstimate = { ...mealDraft, photoThumbnail: thumbnail, confidence: "manual", source: "manual", errorState: error.message || "AI unavailable", createdAt: new Date().toISOString() };
+    state.pendingMealEstimate = { errorState: error.message || "AI unavailable", photoThumbnail: thumbnail, createdAt: new Date().toISOString() };
   }
   saveState();
   render();
@@ -3006,8 +3230,10 @@ function screenContent() {
 }
 
 function homeScreen() {
+  const showSetup = !state.aiSettings.geminiApiKey;
   return `
     <section class="screen home-screen">
+      ${showSetup ? `<section class="panel gemini-startup-card"><div class="section-heading"><h2>Enable AI Coach</h2><button class="ghost" data-screen="hub">Setup</button></div><p>Add a Gemini API key in Hub to unlock personalized coaching, photo logging, and natural language workouts.</p></section>` : ""}
       <header class="home-hero">
         <div><p class="eyebrow">${APP_NAME}</p><h1>${modeHeadline()}</h1>${modeSubhead() ? `<p class="muted">${modeSubhead()}</p>` : ""}</div>
       </header>
@@ -3433,15 +3659,39 @@ async function estimateRecoveryFromPhoto(file) {
   render();
   try {
     const imageDataUrl = await imageFileToDataUrl(file, 1200);
+    const headers = { "Content-Type": "application/json" };
+    if (state.aiSettings.geminiApiKey) {
+      headers["x-gemini-key"] = state.aiSettings.geminiApiKey;
+    }
     const response = await fetch("/api/recovery/whoop-screenshot", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ imageDataUrl })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Screenshot extraction failed.");
-    state.pendingRecoveryEstimate = { date: todayKey(), metrics: payload.metrics || {}, notes: payload.notes || "Review extracted values before saving.", createdAt: new Date().toISOString() };
-    whoopUploadStatus = "Review and confirm before saving.";
+
+    const s = normalizeAiSuggestion({
+      type: "recovery",
+      title: "Recovery Screenshot Extracted",
+      reasoning: payload.notes || "Extracted from screenshot.",
+      payload: {
+        sleepHours: payload.metrics?.sleepHours || 0,
+        hrv: payload.metrics?.hrv || 0,
+        restingHeartRate: payload.metrics?.restingHeartRate || 0,
+        recoveryScore: payload.metrics?.recoveryScore || 0,
+        steps: payload.metrics?.steps || 0,
+        notes: payload.notes || ""
+      }
+    });
+    state.aiSuggestions.unshift(s);
+    state.aiMessages.push(normalizeAiMessage({
+      role: "assistant",
+      content: `I've extracted recovery metrics from your screenshot. Please review and confirm.`,
+      relatedActions: [s.id]
+    }));
+
+    whoopUploadStatus = "";
   } catch (error) {
     whoopUploadStatus = error.message || "Could not read that image.";
   }
@@ -3475,40 +3725,57 @@ function assistantMessages() {
 }
 
 function assistantEmptyState() {
+  const reminders = state.aiReminders.filter(r => !r.deletedAt).slice(0, 3);
+  const remindersHtml = reminders.length ? `
+    <div class="assistant-reminders">
+      <p class="mini-label">Active Reminders</p>
+      ${reminders.map(r => `<div class="reminder-pill"><strong>${r.title}</strong><span>${new Date(r.dateTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>`).join("")}
+    </div>
+  ` : "";
   return `
     <div class="assistant-empty">
       <strong>FitCore Assistant</strong>
       <span>Ask about training, nutrition, recovery, goals, history, Apple Health summaries, or settings.</span>
+      ${remindersHtml}
     </div>
   `;
 }
 
 function floatingAssistant() {
-  if (screen === "onboarding" || state.activeWorkout) return "";
+  if (screen === "onboarding") return "";
   const messages = assistantMessages();
+  const isWorkout = state.activeWorkout;
   const sheet = aiAssistantOpen ? `
       <section class="assistant-backdrop" data-action="close-ai-assistant"></section>
-      <aside class="assistant-sheet mode-${state.activeMode || "training"}" role="dialog" aria-modal="true" aria-label="FitCore AI assistant">
+      <aside class="assistant-sheet mode-${state.activeMode || "training"} ${aiAssistantMaximized ? "maximized" : ""} ${isWorkout ? "workout-safe" : ""}" role="dialog" aria-modal="true" aria-label="FitCore AI assistant">
         <header>
           <div><p class="eyebrow">FitCore AI</p><h2>Assistant</h2></div>
-          <button class="ghost" data-action="close-ai-assistant">Close</button>
+          <div class="header-actions">
+            <button class="ghost" data-action="toggle-ai-maximize">${aiAssistantMaximized ? "Restore" : "Expand"}</button>
+            <button class="ghost" data-action="close-ai-assistant">Close</button>
+          </div>
         </header>
         <div class="segmented assistant-modes">
-          <button class="${aiContextMode === "quick" ? "active" : ""}" data-action="set-ai-context" data-mode="quick">Quick Answer</button>
-          <button class="${aiContextMode === "deep" ? "active" : ""}" data-action="set-ai-context" data-mode="deep">Detailed Coach</button>
+          <button class="${aiContextMode === "quick" ? "active" : ""}" data-action="set-ai-context" data-mode="quick">Quick</button>
+          <button class="${aiContextMode === "deep" ? "active" : ""}" data-action="set-ai-context" data-mode="deep">Coach</button>
+          <button class="${aiContextMode === "log" ? "active" : ""}" data-action="set-ai-context" data-mode="log">Log</button>
         </div>
-        <p class="privacy-note">Changes to workouts, meals, goals, templates, health data, or settings should be previewed and confirmed before saving.</p>
         <div class="chat-log assistant-log">${messages.length ? messages.map(chatBubble).join("") : assistantEmptyState()}</div>
         <div class="assistant-prompts">
           <button data-action="assistant-prompt" data-prompt="What should I focus on today?">Today</button>
           <button data-action="assistant-prompt" data-prompt="Summarize my progress this week.">Recap</button>
-          <button data-action="assistant-prompt" data-prompt="What should I log next?">Log next</button>
+          <button data-action="assistant-prompt" data-prompt="Log something">Log</button>
         </div>
-        <div class="chat-input assistant-input"><input data-input="ai-chat" value="${escapeAttr(aiChatDraft)}" placeholder="Ask FitCore..." /><button class="primary" data-action="send-ai-chat">Send</button></div>
+        <div class="chat-input assistant-input">
+          <button class="icon-btn ${aiIsListening ? "listening" : ""}" data-action="toggle-voice-input" aria-label="Voice input">${iconSvg(navIcons.macros)}</button>
+          <input data-input="ai-chat" value="${escapeAttr(aiChatDraft)}" placeholder="${aiIsListening ? "Listening..." : "Ask FitCore..."}" />
+          <button class="primary" data-action="send-ai-chat">Send</button>
+        </div>
       </aside>
     ` : "";
+  const floatingPos = isWorkout ? "workout-pos" : "";
   return `
-    <button class="floating-ai ${aiAssistantOpen ? "active" : ""}" data-action="toggle-ai-assistant" aria-label="${aiAssistantOpen ? "Close AI assistant" : "Open AI assistant"}">${iconSvg(navIcons.coach)}<span>AI</span></button>
+    <button class="floating-ai ${aiAssistantOpen ? "active" : ""} ${floatingPos}" data-action="toggle-ai-assistant" aria-label="${aiAssistantOpen ? "Close AI assistant" : "Open AI assistant"}">${iconSvg(navIcons.coach)}<span>AI</span></button>
     ${sheet}
   `;
 }
@@ -3660,7 +3927,88 @@ function aiChatScreen() {
 }
 
 function chatBubble(message) {
-  return `<div class="chat-bubble ${message.role}"><strong>${message.role === "user" ? "You" : "Focus AI"}</strong><p>${escapeHtml(message.content)}</p>${message.errorState ? `<span>Fallback: ${escapeHtml(message.errorState)}</span>` : ""}</div>`;
+  const suggestions = state.aiSuggestions.filter(s => message.relatedActions?.includes(s.id));
+  const suggestionHtml = suggestions.length ? `<div class="bubble-suggestions">${suggestions.map(aiSuggestionCard).join("")}</div>` : "";
+  const usedHtml = message.used?.length ? `<div class="chat-used">Used: ${message.used.join(", ")}</div>` : "";
+  return `<div class="chat-bubble ${message.role}"><strong>${message.role === "user" ? "You" : "Focus AI"}</strong><p>${escapeHtml(message.content)}</p>${usedHtml}${suggestionHtml}${message.errorState ? `<span>Fallback: ${escapeHtml(message.errorState)}</span>` : ""}</div>`;
+}
+
+function aiSuggestionCard(s) {
+  if (s.deletedAt) return "";
+  const isCanceled = s.status === "canceled";
+  const isApplied = s.status === "applied";
+  const isPending = s.status === "pending";
+
+  let content = "";
+  if (s.type === "workout_set") {
+    content = `
+      <div class="preview-fields">
+        <label>Exercise<input data-suggestion-id="${s.id}" data-field="exerciseName" value="${escapeAttr(s.payload.exerciseName || "")}"></label>
+        <div class="form-grid">
+          <label>Weight<input data-suggestion-id="${s.id}" data-field="weight" value="${escapeAttr(s.payload.weight || "")}"></label>
+          <label>Reps<input data-suggestion-id="${s.id}" data-field="reps" value="${escapeAttr(s.payload.reps || "")}"></label>
+        </div>
+      </div>
+    `;
+  } else if (s.type === "food") {
+    content = `
+      <div class="preview-fields">
+        <label>Food<input data-suggestion-id="${s.id}" data-field="name" value="${escapeAttr(s.payload.name || "")}"></label>
+        <div class="form-grid">
+          <label>Cal<input data-suggestion-id="${s.id}" data-field="calories" value="${escapeAttr(s.payload.calories || "")}"></label>
+          <label>Pro<input data-suggestion-id="${s.id}" data-field="protein" value="${escapeAttr(s.payload.protein || "")}"></label>
+          <label>Carb<input data-suggestion-id="${s.id}" data-field="carbs" value="${escapeAttr(s.payload.carbs || "")}"></label>
+          <label>Fat<input data-suggestion-id="${s.id}" data-field="fats" value="${escapeAttr(s.payload.fats || "")}"></label>
+        </div>
+      </div>
+    `;
+  } else if (s.type === "bodyweight") {
+    content = `<div class="preview-fields"><label>Weight<input data-suggestion-id="${s.id}" data-field="weight" value="${escapeAttr(s.payload.weight || "")}"></label></div>`;
+  } else if (s.type === "cardio") {
+    content = `
+      <div class="preview-fields">
+        <label>Activity<input data-suggestion-id="${s.id}" data-field="type" value="${escapeAttr(s.payload.type || "")}"></label>
+        <div class="form-grid">
+          <label>Min<input data-suggestion-id="${s.id}" data-field="minutes" value="${escapeAttr(s.payload.minutes || "")}"></label>
+          <label>Cal<input data-suggestion-id="${s.id}" data-field="calories" value="${escapeAttr(s.payload.calories || "")}"></label>
+        </div>
+      </div>
+    `;
+  } else if (s.type === "reminder") {
+    content = `
+      <div class="preview-fields">
+        <label>Reminder<input data-suggestion-id="${s.id}" data-field="title" value="${escapeAttr(s.payload.title || "")}"></label>
+        <label>Time<input data-suggestion-id="${s.id}" data-field="dateTime" type="datetime-local" value="${escapeAttr(s.payload.dateTime || "")}"></label>
+      </div>
+    `;
+  } else if (s.type === "recovery") {
+    content = `
+      <div class="preview-fields">
+        <div class="form-grid">
+          <label>Sleep hrs<input data-suggestion-id="${s.id}" data-field="sleepHours" value="${escapeAttr(s.payload.sleepHours || "")}"></label>
+          <label>HRV<input data-suggestion-id="${s.id}" data-field="hrv" value="${escapeAttr(s.payload.hrv || "")}"></label>
+          <label>RHR<input data-suggestion-id="${s.id}" data-field="restingHeartRate" value="${escapeAttr(s.payload.restingHeartRate || "")}"></label>
+          <label>Score<input data-suggestion-id="${s.id}" data-field="recoveryScore" value="${escapeAttr(s.payload.recoveryScore || "")}"></label>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="suggestion-card ${s.type} status-${s.status}">
+      <div class="card-header">
+        <strong>${escapeHtml(s.title)}</strong>
+        ${isApplied ? "<span>✓ Saved</span>" : isCanceled ? "<span>✕ Canceled</span>" : ""}
+      </div>
+      ${isPending ? content : ""}
+      ${isPending ? `
+        <div class="card-actions">
+          <button class="primary" data-action="apply-ai-suggestion" data-id="${s.id}">Confirm</button>
+          <button class="secondary" data-action="cancel-ai-suggestion" data-id="${s.id}">Cancel</button>
+        </div>
+      ` : ""}
+    </div>
+  `;
 }
 
 function aiSuggestionRows() {
@@ -3919,7 +4267,17 @@ function bodyweightGoalCard() {
 function mealRows(limit = null) {
   const meals = limit ? state.mealEntries.filter((meal) => !meal.deletedAt).slice(0, limit) : mealsForDate();
   if (!meals.length) return emptyState("No meals today", "Snap a meal or enter macros manually.");
-  return meals.map((meal) => `<div class="meal-row">${meal.photoThumbnail ? `<img src="${meal.photoThumbnail}" alt="${escapeAttr(meal.name)}" />` : ""}<div><strong>${meal.name}</strong><span>${meal.calories} cal - ${meal.protein}g protein - ${meal.carbs}g carbs - ${meal.fats}g fats</span><small>${meal.timing ? `${escapeHtml(meal.timing)} - ` : ""}${meal.source === "barcode" ? "Barcode lookup" : meal.source === "ai" ? "AI estimate" : "Manual"}${meal.barcode ? ` - ${escapeHtml(meal.barcode)}` : ""}${meal.notes ? ` - ${escapeHtml(meal.notes)}` : ""}</small></div></div>`).join("");
+  return meals.map((meal) => {
+    const isAi = meal.source === "ai";
+    return `<div class="meal-row ${isAi ? "ai-row" : ""}">
+      ${meal.photoThumbnail ? `<img src="${meal.photoThumbnail}" alt="${escapeAttr(meal.name)}" />` : ""}
+      <div>
+        <strong>${meal.name} ${isAi ? "★" : ""}</strong>
+        <span>${meal.calories} cal - ${meal.protein}g protein - ${meal.carbs}g carbs - ${meal.fats}g fats</span>
+        <small>${meal.timing ? `${escapeHtml(meal.timing)} - ` : ""}${meal.source === "barcode" ? "Barcode lookup" : meal.source === "ai" ? "AI estimate" : "Manual"}${meal.barcode ? ` - ${escapeHtml(meal.barcode)}` : ""}${meal.notes ? ` - ${escapeHtml(meal.notes)}` : ""}</small>
+      </div>
+    </div>`;
+  }).join("");
 }
 
 function nutritionSettingsForm() {
@@ -3974,6 +4332,7 @@ function hubScreen() {
         ${hubButton("report", "Report", "Weekly review")}
         ${hubButton("exercises", "Exercises", `${allExercises().length} lifts`)}
       </section>
+      <section class="panel"><div class="section-heading"><h2>Gemini AI Assistant</h2><span class="status-pill ${state.geminiStatus}">${state.geminiStatus.replace("_", " ")}</span></div>${geminiSetupForm()}</section>
       <section class="panel"><div class="section-heading"><h2>Settings</h2><span>${state.settings.storageMode}</span></div>${appSettingsForm()}</section>
       <section class="panel"><div class="section-heading"><h2>Connected apps</h2><button class="ghost" data-action="connect-apple-health">Apple Health</button></div>${connectedAppsCard()}</section>
       ${collapsiblePanel("Storage status", storageStatusCard(), { meta: storageUsage().status })}
@@ -4355,8 +4714,10 @@ function settingsScreen() {
 
 function templatesScreen() {
   const templates = activeTemplates();
+  const showSetup = !state.aiSettings.geminiApiKey;
   return `
     <section class="screen">
+      ${showSetup ? `<section class="panel gemini-startup-card"><div class="section-heading"><h2>Enable AI Coach</h2><button class="ghost" data-screen="hub">Setup</button></div><p>Add a Gemini API key in Hub to unlock personalized coaching, photo logging, and natural language workouts.</p></section>` : ""}
       <header class="simple-top">
         <div><p class="eyebrow">Training</p><h1>Workouts</h1></div>
         <button class="secondary" data-action="create-template">New blank</button>
@@ -4494,8 +4855,9 @@ function setRow(itemIndex, setIndex, set) {
   ];
   const currentFlag = typeOptions.find(([label, flag]) => flag && set[flag])?.[1] || "";
 
+  const isAi = set.source === "ai";
   return `
-    <div class="set-row-new ${set.completed ? "complete" : ""}">
+    <div class="set-row-new ${set.completed ? "complete" : ""} ${isAi ? "ai-set" : ""}">
       <div class="set-col-num">
         <button class="set-num-btn" data-action="toggle-set" data-item="${itemIndex}" data-set="${setIndex}">${setIndex + 1}</button>
       </div>
@@ -4765,7 +5127,10 @@ function bodyweightForm(showDetails = false) {
 function bodyweightRows(limit = 4) {
   const entries = state.bodyweightEntries.filter((entry) => !entry.deletedAt).slice(0, limit);
   if (!entries.length) return `<p class="privacy-note">Log weigh-ins to tie nutrition to strength progress.</p>`;
-  return entries.map((entry) => `<div class="leader-row compact-row"><div><strong>${entry.weight} lb</strong><span>${entry.date}${entry.timing ? ` - ${escapeHtml(entry.timing)}` : ""}${entry.notes ? ` - ${escapeHtml(entry.notes)}` : ""}</span></div><b>${entry.source}</b></div>`).join("");
+  return entries.map((entry) => {
+    const isAi = entry.source === "ai";
+    return `<div class="leader-row compact-row ${isAi ? "ai-row" : ""}"><div><strong>${entry.weight} lb ${isAi ? "★" : ""}</strong><span>${entry.date}${entry.timing ? ` - ${escapeHtml(entry.timing)}` : ""}${entry.notes ? ` - ${escapeHtml(entry.notes)}` : ""}</span></div><b>${entry.source}</b></div>`;
+  }).join("");
 }
 
 function supplementForm() {
@@ -4837,7 +5202,10 @@ function cardioHistoryCard(entry) {
 function exerciseHistoryRows(exerciseId) {
   const sets = exerciseHistory(exerciseId).slice(0, 12);
   if (!sets.length) return emptyState("No sets yet", "Log this exercise to see its history.");
-  return sets.map((set) => `<div class="leader-row compact-row"><div><strong>${set.weight} x ${set.reps}</strong><span>${new Date(set.workoutDate).toLocaleDateString()}${set.isDropSet ? " - drop" : ""}${set.toFailure ? " - failure" : ""}</span></div><b>${estimatedOneRepMax(set)}</b></div>`).join("");
+  return sets.map((set) => {
+    const isAi = set.source === "ai";
+    return `<div class="leader-row compact-row ${isAi ? "ai-row" : ""}"><div><strong>${set.weight} x ${set.reps} ${isAi ? "★" : ""}</strong><span>${new Date(set.workoutDate).toLocaleDateString()}${set.isDropSet ? " - drop" : ""}${set.toFailure ? " - failure" : ""}</span></div><b>${estimatedOneRepMax(set)}</b></div>`;
+  }).join("");
 }
 
 function trackedLiftMiniRows(ids = trackedLiftIds()) {
@@ -4886,7 +5254,10 @@ function recoveryGoalRows() {
 function recoveryHistoryRows() {
   const rows = state.recoveryCheckIns.filter((entry) => !entry.deletedAt).slice(0, 12);
   if (!rows.length) return emptyState("No recovery history", "Save check-ins or import Apple Health data.");
-  return rows.map((entry) => `<div class="leader-row compact-row"><div><strong>${entry.date}</strong><span>${entry.sleepHours || "--"}h sleep - stress ${entry.stress || "--"} - energy ${entry.energy || "--"}</span></div><b>${readinessFromRecovery(entry)}</b></div>`).join("");
+  return rows.map((entry) => {
+    const isAi = entry.source === "ai";
+    return `<div class="leader-row compact-row ${isAi ? "ai-row" : ""}"><div><strong>${entry.date} ${isAi ? "★" : ""}</strong><span>${entry.sleepHours || "--"}h sleep - stress ${entry.stress || "--"} - energy ${entry.energy || "--"}</span></div><b>${readinessFromRecovery(entry)}</b></div>`;
+  }).join("");
 }
 
 function capitalize(value) {
@@ -5261,9 +5632,13 @@ function bindEvents(root) {
       if (action === "cancel-import") { state.importPreview = null; saveState(); render(); }
       if (action === "complete-onboarding") completeOnboarding();
       if (action === "skip-onboarding") completeOnboarding(false);
+      if (action === "toggle-api-key-visibility") { state.aiSettings.showApiKey = !state.aiSettings.showApiKey; render(); }
+      if (action === "test-gemini-connection") void testGeminiConnection();
       if (action === "set-ai-context") { aiContextMode = button.dataset.mode || "quick"; render(); }
       if (action === "toggle-ai-assistant") { aiAssistantOpen = !aiAssistantOpen; render(); }
-      if (action === "close-ai-assistant") { aiAssistantOpen = false; render(); }
+      if (action === "close-ai-assistant") { aiAssistantOpen = false; aiAssistantMaximized = false; render(); }
+      if (action === "toggle-ai-maximize") { aiAssistantMaximized = !aiAssistantMaximized; render(); }
+      if (action === "toggle-voice-input") toggleVoiceInput();
       if (action === "assistant-prompt") { aiChatDraft = button.dataset.prompt || ""; void sendAiChat(); }
       if (action === "onboarding-next") { onboardingStep += 1; render(); }
       if (action === "onboarding-back") { onboardingStep -= 1; render(); }
@@ -5288,6 +5663,7 @@ function bindEvents(root) {
       if (action === "close-popup") { activePopup = null; render(); }
       if (action === "send-ai-chat") sendAiChat();
       if (action === "apply-ai-suggestion") applyAiSuggestion(button.dataset.id);
+      if (action === "cancel-ai-suggestion") cancelAiSuggestion(button.dataset.id);
       if (action === "dismiss-ai-suggestion") dismissAiSuggestion(button.dataset.id);
       if (action === "apply-estimated-targets") applyEstimatedTargets();
       if (action === "lookup-barcode") lookupBarcode();
@@ -5434,6 +5810,16 @@ function bindEvents(root) {
     aiChatDraft = event.target.value;
   });
 
+  root.querySelectorAll("[data-suggestion-id][data-field]").forEach(input => {
+    input.addEventListener("input", () => {
+      const s = state.aiSuggestions.find(item => item.id === input.dataset.suggestionId);
+      if (s) {
+        s.payload[input.dataset.field] = input.value;
+        saveState();
+      }
+    });
+  });
+
   root.querySelectorAll("[data-input='meal-photo']").forEach((input) => {
     input.addEventListener("change", (event) => {
       const file = event.target.files?.[0];
@@ -5505,6 +5891,12 @@ function bindEvents(root) {
   if (appSettings) appSettings.addEventListener("submit", (event) => {
     event.preventDefault();
     saveAppSettingsFromForm(appSettings);
+  });
+
+  const geminiSetup = root.querySelector("[data-form='gemini-setup']");
+  if (geminiSetup) geminiSetup.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveGeminiSettingsFromForm(geminiSetup);
   });
 
   const goal = root.querySelector("[data-form='goal']");
@@ -5604,6 +5996,20 @@ function bindEvents(root) {
 }
 
 setInterval(() => {
+  const now = Date.now();
+  state.aiReminders.filter(r => !r.deletedAt && !r.firedAt).forEach(r => {
+    if (new Date(r.dateTime).getTime() <= now) {
+      if (state.settings.notificationsEnabled && Notification.permission === "granted") {
+        new Notification(r.title, { body: r.notes || "Time for your scheduled reminder." });
+      } else {
+        alert(`Reminder: ${r.title}\n${r.notes || ""}`);
+      }
+      r.firedAt = now;
+      saveState();
+      render();
+    }
+  });
+
   if (state.activeWorkout && !restRemaining && document.activeElement?.tagName !== "INPUT") render();
 }, 30000);
 
